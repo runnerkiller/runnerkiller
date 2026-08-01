@@ -9,7 +9,7 @@ export function createHealthService({
   discordClient,
   configRepository,
   setup = {},
-  version = "0.1.0",
+  version = "0.2.0",
   cacheTtlMs = 5_000,
   now = () => Date.now(),
   startedAt = Date.now(),

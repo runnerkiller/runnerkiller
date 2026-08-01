@@ -46,6 +46,46 @@ describe("createDiscordClient", () => {
     assert.equal(message.content, "hi");
   });
 
+  test("채널 메시지 목록 쿼리를 보낸다", async () => {
+    const { client, fetchImpl } = makeClient({ status: 200, body: [] });
+    await client.getChannelMessages("123", { limit: 30, before: "456" });
+    assert.equal(
+      fetchImpl.calls[0].url,
+      `${DISCORD_API_BASE}/channels/123/messages?limit=30&before=456`,
+    );
+  });
+
+  test("사진이 없는 메시지는 JSON으로 생성한다", async () => {
+    const { client, fetchImpl } = makeClient({ status: 200, body: { id: "9" } });
+    await client.createMessage("123", { content: "hello" });
+    const call = fetchImpl.calls[0];
+    assert.equal(call.init.method, "POST");
+    assert.equal(call.init.headers["Content-Type"], "application/json");
+    assert.deepEqual(JSON.parse(call.init.body), { content: "hello" });
+  });
+
+  test("사진이 있으면 Discord multipart 형식으로 생성한다", async () => {
+    const { client, fetchImpl } = makeClient({ status: 200, body: { id: "9" } });
+    await client.createMessage(
+      "123",
+      { content: "hello" },
+      [
+        {
+          data: Buffer.from("image"),
+          contentType: "image/jpeg",
+          filename: "evidence.jpg",
+          description: "증거",
+        },
+      ],
+    );
+    const call = fetchImpl.calls[0];
+    assert.ok(call.init.body instanceof FormData);
+    assert.equal(call.init.headers["Content-Type"], undefined);
+    const payload = JSON.parse(call.init.body.get("payload_json"));
+    assert.equal(payload.attachments[0].filename, "evidence.jpg");
+    assert.ok(call.init.body.get("files[0]") instanceof Blob);
+  });
+
   test("429를 만나면 retry_after만큼 기다렸다가 다시 시도한다", async () => {
     const { client, sleep, fetchImpl } = makeClient([
       { status: 429, body: { retry_after: 0.25 } },

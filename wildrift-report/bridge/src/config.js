@@ -26,6 +26,7 @@ export const ENV_SPEC = [
   { key: "DISCORD_VERIFICATIONS_CHANNEL_ID", stage: 4, kind: "snowflake", required: false },
   { key: "DISCORD_REPORTS_PENDING_CHANNEL_ID", stage: 2, kind: "snowflake", required: false },
   { key: "DISCORD_REPORTS_APPROVED_CHANNEL_ID", stage: 2, kind: "snowflake", required: false },
+  { key: "DEV_REPORTER_DISCORD_ID", stage: 2, kind: "snowflake", required: false },
   { key: "DISCORD_REPORTS_REJECTED_CHANNEL_ID", stage: 3, kind: "snowflake", required: false },
   { key: "DISCORD_VOTES_CHANNEL_ID", stage: 5, kind: "snowflake", required: false },
   { key: "DISCORD_AUDIT_LOG_CHANNEL_ID", stage: 3, kind: "snowflake", required: false },
@@ -135,6 +136,7 @@ export function buildConfig(env = process.env) {
       },
       configMessageId: values.DISCORD_CONFIG_MESSAGE_ID ?? null,
     },
+    devReporterDiscordId: values.DEV_REPORTER_DISCORD_ID ?? null,
     sessionSigningSecret: values.SESSION_SIGNING_SECRET ?? null,
   };
 }

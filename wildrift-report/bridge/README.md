@@ -17,11 +17,14 @@
 | Discord REST 클라이언트 (429/5xx 재시도) | 완료 |
 | `GET /health` | 완료 |
 | `configRepository.get()` (설정 고정 메시지 읽기) | 완료 |
-| 제보 읽기/쓰기 | 미구현 (2단계) |
+| 제보 입력 검증 | 완료 |
+| 제보 작성 + Discord 사진 첨부 | 완료 |
+| 승인 제보 목록/상세 조회 | 완료 |
 | Discord OAuth 로그인, 관리자 판정 | 미구현 (3단계) |
 | 계정 인증, 투표 | 미구현 (4~5단계) |
 
-이 단계에서는 **읽기만 한다.** Discord에 아무것도 쓰지 않는다.
+현재 `POST /api/reports`는 `wr-reports-pending` 채널에 제보 메시지와 사진을
+저장한다. 관리자 승인/반려는 아직 구현하지 않았다.
 
 ## 필요한 것
 
@@ -82,7 +85,8 @@ Discord 설정에서 **고급 → 개발자 모드**를 켜면 채널을 우클�
 | `wr-votes` | `DISCORD_VOTES_CHANNEL_ID` | 5 |
 | `wr-errors` | `DISCORD_ERRORS_CHANNEL_ID` | 6 |
 
-**1단계에서는 `wr-config` 하나만 있으면 된다.** 나머지는 비워둬도 서버가 뜨고,
+**제보 API까지 사용하려면** `wr-config`, `wr-reports-pending`,
+`wr-reports-approved` 세 채널이 필요하다. 나머지는 비워둬도 서버가 뜨고,
 `/health`가 어느 단계에 무엇이 빠졌는지 알려준다.
 
 서버 이름을 우클릭해 **ID 복사**하면 `DISCORD_GUILD_ID`다.
@@ -138,6 +142,9 @@ DISCORD_BOT_TOKEN=...
 DISCORD_GUILD_ID=...
 DISCORD_CONFIG_CHANNEL_ID=...
 DISCORD_CONFIG_MESSAGE_ID=...
+DISCORD_REPORTS_PENDING_CHANNEL_ID=...
+DISCORD_REPORTS_APPROVED_CHANNEL_ID=...
+DEV_REPORTER_DISCORD_ID=...
 ```
 
 웹사이트를 붙일 때는 `PUBLIC_SITE_ORIGIN`도 채운다. 끝에 `/`를 붙이지 않는다.
@@ -147,6 +154,10 @@ PUBLIC_SITE_ORIGIN=https://runnerkiller.github.io
 ```
 
 `.env`는 `.gitignore`에 들어 있다. **절대 커밋하지 않는다.**
+
+`DEV_REPORTER_DISCORD_ID`는 Discord OAuth가 완성되기 전까지만 사용하는 개발용 제출자다.
+Discord 개발자 모드에서 본인 계정을 길게 누르거나 우클릭해 **사용자 ID 복사**로 얻는다.
+공개 운영 전에 3단계 OAuth 로그인으로 반드시 교체한다.
 
 ## 5. 실행
 
@@ -213,6 +224,50 @@ npm test
 모든 테스트는 Discord HTTP 호출을 모킹한다. 실제 네트워크로 나가지 않으므로
 봇 토큰 없이도 돌아간다. GitHub Actions에서도 같은 명령이 자동 실행된다.
 
+## 8. 제보 API
+
+### 승인 제보 목록
+
+```http
+GET /api/reports?query=닉네임&category=troll&limit=30&cursor=DISCORD_MESSAGE_ID
+```
+
+`category`는 `hack`, `abuse`, `troll` 중 하나다. `cursor`에는 이전 응답의
+`nextCursor`를 넣는다.
+
+### 승인 제보 상세
+
+```http
+GET /api/reports/{DISCORD_MESSAGE_ID}
+```
+
+### 제보 제출
+
+```http
+POST /api/reports
+Content-Type: application/json
+```
+
+```json
+{
+  "nickname": "협곡의파괴자",
+  "category": "troll",
+  "tags": ["고의 피딩"],
+  "mode": "랭크",
+  "occurredAt": "2026-08-01",
+  "description": "한타 직전에 반복적으로 적진으로 들어가 사망했습니다.",
+  "revealReporter": false,
+  "evidence": ["data:image/jpeg;base64,..."]
+}
+```
+
+- 설명은 15~800자다.
+- 사진은 JPEG, PNG, WebP만 허용하며 최대 3장, 각 5MB다.
+- 개인정보 의심 내용은 Bridge에서 다시 차단한다.
+- 저장된 Discord 메시지 ID가 `reportId`다.
+- 내부 `reporterDiscordId`는 공개 API 응답에서 제거한다.
+- 현재 로그인 전 개발 단계이므로 제출자는 `.env`의 `DEV_REPORTER_DISCORD_ID`로 기록된다.
+
 ## 보안 규칙
 
 계획서 1절의 원칙을 그대로 따른다.
@@ -224,5 +279,5 @@ npm test
 
 ## 다음 단계
 
-계획서 13절 2단계(제보 읽기/쓰기)부터 이어서 구현한다.
+계획서 13절 3단계(Discord OAuth와 관리자 검수)부터 이어서 구현한다.
 Termux 상시 실행과 자동 재시작 방법은 6단계에서 문서로 정리한다.

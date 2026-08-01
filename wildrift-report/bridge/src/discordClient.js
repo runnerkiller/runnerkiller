@@ -58,7 +58,7 @@ export function createDiscordClient({
   sleep = defaultSleep,
   maxRetries = 3,
   timeoutMs = 10_000,
-  userAgent = "WildriftReportBridge (https://github.com/runnerkiller/runnerkiller, 0.1.0)",
+  userAgent = "WildriftReportBridge (https://github.com/runnerkiller/runnerkiller, 0.2.0)",
 } = {}) {
   if (!token) throw new Error("Discord 봇 토큰이 필요합니다.");
   if (typeof fetchImpl !== "function") {
@@ -79,6 +79,9 @@ export function createDiscordClient({
       Accept: "application/json",
     };
     if (options.body !== undefined) headers["Content-Type"] = "application/json";
+    if (options.body !== undefined && options.formData !== undefined) {
+      throw new Error("JSON body와 multipart formData를 동시에 보낼 수 없습니다.");
+    }
 
     let lastError = null;
 
@@ -89,7 +92,12 @@ export function createDiscordClient({
         response = await fetchImpl(url.toString(), {
           method,
           headers,
-          body: options.body === undefined ? undefined : JSON.stringify(options.body),
+          body:
+            options.formData !== undefined
+              ? options.formData
+              : options.body === undefined
+                ? undefined
+                : JSON.stringify(options.body),
           signal: timeout,
         });
       } catch (cause) {
@@ -165,5 +173,36 @@ export function createDiscordClient({
     getChannel: (channelId) => request("GET", `/channels/${channelId}`),
     getMessage: (channelId, messageId) =>
       request("GET", `/channels/${channelId}/messages/${messageId}`),
+    getChannelMessages: (channelId, query = {}) =>
+      request("GET", `/channels/${channelId}/messages`, { query }),
+    createMessage(channelId, payload, files = []) {
+      if (!files.length) {
+        return request("POST", `/channels/${channelId}/messages`, {
+          body: payload,
+        });
+      }
+
+      const form = new FormData();
+      const attachments = files.map((file, index) => ({
+        id: index,
+        filename: file.filename,
+        description: file.description,
+      }));
+      form.append("payload_json", JSON.stringify({ ...payload, attachments }));
+      files.forEach((file, index) => {
+        form.append(
+          `files[${index}]`,
+          new Blob([file.data], { type: file.contentType }),
+          file.filename,
+        );
+      });
+      return request("POST", `/channels/${channelId}/messages`, {
+        formData: form,
+      });
+    },
+    editMessage: (channelId, messageId, payload) =>
+      request("PATCH", `/channels/${channelId}/messages/${messageId}`, {
+        body: payload,
+      }),
   };
 }

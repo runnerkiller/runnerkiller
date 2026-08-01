@@ -2,11 +2,21 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 
 import { createServer } from "../src/server.js";
+import { ReportNotFoundError } from "../src/repositories/reportRepository.js";
 
 const SITE_ORIGIN = "https://runnerkiller.github.io";
 
 let healthResult = { status: "ok", version: "0.1.0" };
 let healthError = null;
+let featureFlags = {
+  publicList: true,
+  reportSubmission: true,
+  evidenceUpload: true,
+  evidenceRequired: false,
+  maintenanceMode: false,
+};
+let approvedReports = [];
+let createdInput = null;
 
 const healthService = {
   async check() {
@@ -15,11 +25,40 @@ const healthService = {
   },
 };
 
+const configRepository = {
+  async get() {
+    return { config: featureFlags };
+  },
+};
+
+const reportRepository = {
+  async listApproved(options) {
+    return { reports: approvedReports, nextCursor: null, options };
+  },
+  async getApprovedById(reportId) {
+    const report = approvedReports.find((item) => item.reportId === reportId);
+    if (!report) {
+      throw new ReportNotFoundError(reportId);
+    }
+    return report;
+  },
+  async create(report, evidenceFiles) {
+    createdInput = { report, evidenceFiles };
+    return { reportId: "333333333333333333", status: "pending", ...report };
+  },
+};
+
 let server;
 let baseUrl;
 
 before(async () => {
-  server = createServer({ healthService, publicSiteOrigin: SITE_ORIGIN });
+  server = createServer({
+    healthService,
+    configRepository,
+    reportRepository,
+    devReporterDiscordId: "444444444444444444",
+    publicSiteOrigin: SITE_ORIGIN,
+  });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
@@ -82,12 +121,107 @@ describe("GET /health", () => {
 
 describe("없는 경로", () => {
   test("계획서가 정한 오류 형식으로 404를 준다", async () => {
-    const response = await fetch(`${baseUrl}/api/reports`);
+    const response = await fetch(`${baseUrl}/api/unknown`);
     const body = await response.json();
 
     assert.equal(response.status, 404);
     assert.equal(body.error.code, "not_found");
     assert.equal(typeof body.error.message, "string");
+  });
+});
+
+describe("reports API", () => {
+  test("GET /api/reports가 승인 목록을 반환한다", async () => {
+    approvedReports = [
+      { reportId: "333333333333333333", nickname: "협곡의파괴자", status: "approved" },
+    ];
+    const response = await fetch(`${baseUrl}/api/reports?category=troll&query=협곡`);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.reports.length, 1);
+    assert.equal(body.options.category, "troll");
+  });
+
+  test("지원하지 않는 분류는 400", async () => {
+    const response = await fetch(`${baseUrl}/api/reports?category=unknown`);
+    const body = await response.json();
+    assert.equal(response.status, 400);
+    assert.equal(body.error.code, "invalid_category");
+  });
+
+  test("GET /api/reports/:id가 승인 제보 상세를 반환한다", async () => {
+    approvedReports = [
+      { reportId: "333333333333333333", nickname: "협곡의파괴자", status: "approved" },
+    ];
+    const response = await fetch(`${baseUrl}/api/reports/333333333333333333`);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.report.nickname, "협곡의파괴자");
+  });
+
+  test("없는 승인 제보 상세는 404", async () => {
+    approvedReports = [];
+    const response = await fetch(`${baseUrl}/api/reports/333333333333333333`);
+    const body = await response.json();
+    assert.equal(response.status, 404);
+    assert.equal(body.error.code, "report_not_found");
+  });
+
+  test("POST /api/reports가 검증 후 저장한다", async () => {
+    createdInput = null;
+    const response = await fetch(`${baseUrl}/api/reports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nickname: "협곡의파괴자",
+        category: "troll",
+        tags: ["고의 피딩"],
+        mode: "랭크",
+        occurredAt: "2026-08-01",
+        description: "한타 직전에 반복적으로 적진으로 들어가 사망했습니다.",
+        evidence: [],
+      }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 201);
+    assert.equal(body.report.status, "pending");
+    assert.equal(createdInput.report.reporterDiscordId, "444444444444444444");
+  });
+
+  test("입력 오류는 필드별 422를 반환한다", async () => {
+    const response = await fetch(`${baseUrl}/api/reports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nickname: "x" }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 422);
+    assert.equal(body.error.code, "validation_failed");
+    assert.ok(body.error.issues.length > 0);
+  });
+
+  test("기능 설정이 제출을 막으면 403", async () => {
+    featureFlags = { ...featureFlags, reportSubmission: false };
+    const response = await fetch(`${baseUrl}/api/reports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const body = await response.json();
+    featureFlags = { ...featureFlags, reportSubmission: true };
+    assert.equal(response.status, 403);
+    assert.equal(body.error.code, "feature_disabled");
+  });
+
+  test("제보 채널이 설정되지 않으면 503", async () => {
+    const bare = createServer({ healthService, reportRepository: null });
+    await new Promise((resolve) => bare.listen(0, "127.0.0.1", resolve));
+    const bareUrl = `http://127.0.0.1:${bare.address().port}`;
+    const response = await fetch(`${bareUrl}/api/reports`);
+    const body = await response.json();
+    await new Promise((resolve) => bare.close(resolve));
+    assert.equal(response.status, 503);
+    assert.equal(body.error.code, "reports_not_configured");
   });
 });
 

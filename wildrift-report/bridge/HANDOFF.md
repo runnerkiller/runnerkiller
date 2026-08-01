@@ -1,20 +1,55 @@
 # 작업 인수인계 — Discord Bridge 1단계
 
-> 이 문서는 이전 에이전트(Claude)가 다음 에이전트에게 남긴다.
+> 이 문서는 다음 에이전트가 현재 구현 상태를 빠르게 파악하도록 계속 갱신한다.
 > 큰 그림은 [`../DISCORD_BACKEND_PLAN.md`](../DISCORD_BACKEND_PLAN.md)를 먼저 읽어라.
 > 이 문서는 "그 계획 중 실제로 어디까지 됐고, 왜 그렇게 만들었는지"를 설명한다.
 
-## 지금 상태
+## 현재 최신 상태 — 2단계 제보 저장 완료
+
+- 브랜치: `feat/discord-bridge-skeleton`
+- Bridge 버전: `0.2.0`
+- 로컬 Node.js 24에서 `npm test` 실행: **104개 전부 통과**
+- Discord 실제 토큰을 사용한 통합 테스트는 아직 하지 않았다. 테스트의 Discord HTTP 호출은 전부 모킹된다.
+- `POST /api/reports`: 입력을 검증하고 `wr-reports-pending`에 메시지와 사진을 저장한다.
+- `GET /api/reports`: `wr-reports-approved`에서 승인 제보를 읽고 검색·분류·커서를 적용한다.
+- `GET /api/reports/:reportId`: Discord 메시지 ID로 승인 제보 상세를 읽는다.
+- Discord 메시지 ID 자체를 `reportId`로 사용한다. ID를 JSON 본문에 중복 저장하지 않는다.
+- 공개 응답에서는 `reporterDiscordId`와 관리자 Discord ID를 제거한다.
+- OAuth 전 임시 제출자는 `DEV_REPORTER_DISCORD_ID` 환경변수로만 지정한다.
+- 기존 `node --test tests/`가 일부 Node 버전에서 실패해 `node --test tests/*.test.js`로 수정했다.
+
+### 2단계에서 추가·수정된 핵심 파일
+
+```text
+src/validation/reportValidation.js       닉네임·날짜·태그·PII·이미지 검증
+src/repositories/reportRepository.js     Discord 제보 생성·목록·상세
+src/discordClient.js                     목록/작성/수정 및 multipart 첨부
+src/server.js                            GET/POST /api/reports 라우트
+tests/reportValidation.test.js           입력 검증 테스트
+tests/reportRepository.test.js           저장소 테스트
+```
+
+### 다음 에이전트가 할 일 — 계획서 13절 3단계
+
+1. Discord OAuth Authorization Code 로그인과 HttpOnly 서명 쿠키를 구현한다.
+2. `DEV_REPORTER_DISCORD_ID`를 실제 로그인 사용자의 Discord ID로 교체한다.
+3. Discord 사용자/역할을 기준으로 관리자 API 권한을 검사한다.
+4. pending 제보 승인·반려 API를 구현한다. Discord는 메시지 이동 API가 없으므로 대상 채널에 새 메시지를 생성하고 원본 ID를 `originReportId`로 기록한 뒤 감사 로그를 남기는 방식을 사용한다.
+5. 승인/반려 과정에서 사진 첨부파일을 새 메시지로 복제하는 방법을 구현하고 테스트한다.
+6. 기존 프런트엔드의 하드코딩 관리자 비밀번호는 OAuth 관리자 화면이 완성된 뒤 제거한다.
+7. 프런트엔드를 API에 연결하기 전에 API 단위 테스트와 실제 비공개 Discord 서버 통합 테스트를 먼저 한다.
+
+## 1단계 당시 상태와 설계 기록
 
 - 브랜치: `feat/discord-bridge-skeleton` (origin에 push됨, `main`은 건드리지 않음)
 - PR: **아직 열지 않았음.** 사용자가 명시적으로 요청하지 않는 한 열지 않는다.
-- GitHub Actions: `Bridge tests` 워크플로가 이 브랜치에서 **통과함**
+- GitHub Actions: 1단계 당시 `Bridge tests` 워크플로가 이 브랜치에서 **통과함**
   (https://github.com/runnerkiller/runnerkiller/actions/runs/30694519193 — test job, secret-scan job 모두 success)
 - 로컬 환경에 Node.js가 설치되어 있지 않아서, 로컬에서 `npm test`를 돌릴 수 없었다.
   모든 검증은 GitHub Actions에서 이루어졌다. **다음 에이전트도 로컬에 Node가 없을 수 있으니
   먼저 `node --version`으로 확인하고, 없으면 CI 결과로 검증하는 흐름을 유지해라.**
-- 계획서(`DISCORD_BACKEND_PLAN.md`) 16절이 정한 "다음 에이전트에게 주는 첫 작업" 7개 항목을
-  전부 구현했다. **아직 Discord에 쓰기 요청을 하나도 안 보낸다 — 읽기 전용이다.**
+- 계획서(`DISCORD_BACKEND_PLAN.md`) 16절이 정한 첫 작업 7개 항목은 모두 구현했다.
+  이후 2단계에서 Discord 제보 쓰기 기능이 추가되었다.
 
 ## 계획서 대비 구현 매핑 (16절 체크리스트)
 
@@ -140,7 +175,7 @@ curl http://localhost:8787/health
 `npm test`와 시크릿 스캔을 돌린다. 이 워크플로는 `wildrift-report/bridge/**` 경로가
 바뀔 때만 트리거된다 — 프런트엔드만 고칠 때는 안 돈다.
 
-## 다음 에이전트가 이어서 할 일 (계획서 13절 2단계)
+## 2단계 구현에 사용한 기존 지시 (완료됨)
 
 계획서 원문을 그대로 따르되, 이번에 만든 패턴을 재사용해라:
 

@@ -1,5 +1,13 @@
 import { createServer as createHttpServer } from "node:http";
 
+import { DiscordApiError } from "./discordClient.js";
+import { ReportNotFoundError } from "./repositories/reportRepository.js";
+import {
+  REPORT_CATEGORIES,
+  ReportValidationError,
+  validateReportSubmission,
+} from "./validation/reportValidation.js";
+
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
@@ -15,6 +23,66 @@ function sendJson(res, status, payload, extraHeaders = {}) {
 
 function sendError(res, status, code, message, extraHeaders = {}) {
   sendJson(res, status, { error: { code, message } }, extraHeaders);
+}
+
+class RequestError extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.name = "RequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function readJsonBody(req, maxBytes = 22 * 1024 * 1024) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      throw new RequestError(413, "payload_too_large", "요청 본문이 너무 큽니다.");
+    }
+    chunks.push(chunk);
+  }
+
+  if (chunks.length === 0) {
+    throw new RequestError(400, "invalid_json", "JSON 요청 본문이 필요합니다.");
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new RequestError(400, "invalid_json", "JSON 형식이 올바르지 않습니다.");
+  }
+}
+
+function reportIdFromPath(pathname) {
+  const match = pathname.match(/^\/api\/reports\/(\d{17,20})$/);
+  return match?.[1] ?? null;
+}
+
+function sendRouteError(res, error, cors) {
+  if (error instanceof RequestError) {
+    sendError(res, error.status, error.code, error.message, cors);
+    return;
+  }
+  if (error instanceof ReportValidationError) {
+    sendJson(
+      res,
+      422,
+      { error: { code: "validation_failed", message: error.message, issues: error.issues } },
+      cors,
+    );
+    return;
+  }
+  if (error instanceof ReportNotFoundError) {
+    sendError(res, 404, "report_not_found", error.message, cors);
+    return;
+  }
+  if (error instanceof DiscordApiError) {
+    sendError(res, 502, "discord_unavailable", "Discord 저장소 요청에 실패했습니다.", cors);
+    return;
+  }
+  throw error;
 }
 
 /**
@@ -33,7 +101,13 @@ function corsHeaders(requestOrigin, allowedOrigin) {
   };
 }
 
-export function createRequestHandler({ healthService, publicSiteOrigin = null }) {
+export function createRequestHandler({
+  healthService,
+  configRepository = null,
+  reportRepository = null,
+  devReporterDiscordId = null,
+  publicSiteOrigin = null,
+}) {
   return async function handle(req, res) {
     const origin = req.headers.origin ?? null;
     const cors = corsHeaders(origin, publicSiteOrigin);
@@ -73,6 +147,110 @@ export function createRequestHandler({ healthService, publicSiteOrigin = null })
           error?.message ?? "상태 확인에 실패했습니다.",
           cors,
         );
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/reports") {
+      if (!reportRepository) {
+        sendError(
+          res,
+          503,
+          "reports_not_configured",
+          "제보 채널 설정이 아직 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+
+      try {
+        const flags = configRepository
+          ? (await configRepository.get()).config
+          : {
+              publicList: true,
+              reportSubmission: true,
+              evidenceUpload: true,
+              evidenceRequired: false,
+              maintenanceMode: false,
+            };
+
+        if (flags.maintenanceMode) {
+          throw new RequestError(503, "maintenance_mode", "현재 점검 중입니다.");
+        }
+
+        if (req.method === "GET" || req.method === "HEAD") {
+          if (!flags.publicList) {
+            throw new RequestError(403, "feature_disabled", "공개 명단 기능이 꺼져 있습니다.");
+          }
+          const category = url.searchParams.get("category") || null;
+          if (category && !Object.hasOwn(REPORT_CATEGORIES, category)) {
+            throw new RequestError(400, "invalid_category", "지원하지 않는 분류입니다.");
+          }
+          const result = await reportRepository.listApproved({
+            query: url.searchParams.get("query") || null,
+            category,
+            before: url.searchParams.get("cursor") || null,
+            limit: url.searchParams.get("limit") || 30,
+          });
+          sendJson(res, 200, result, cors);
+          return;
+        }
+
+        if (req.method === "POST") {
+          if (!flags.reportSubmission) {
+            throw new RequestError(403, "feature_disabled", "제보 제출 기능이 꺼져 있습니다.");
+          }
+          if (!devReporterDiscordId) {
+            throw new RequestError(
+              503,
+              "reporter_not_configured",
+              "로그인 구현 전 개발용 제출자 ID를 설정해야 합니다.",
+            );
+          }
+          const body = await readJsonBody(req);
+          const validated = validateReportSubmission(body, { flags });
+          const report = await reportRepository.create(
+            { ...validated.report, reporterDiscordId: devReporterDiscordId },
+            validated.evidenceFiles,
+          );
+          sendJson(res, 201, { report }, cors);
+          return;
+        }
+
+        throw new RequestError(405, "method_not_allowed", "GET과 POST만 지원합니다.");
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    const reportId = reportIdFromPath(url.pathname);
+    if (reportId) {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        sendError(res, 405, "method_not_allowed", "GET만 지원합니다.", {
+          ...cors,
+          Allow: "GET, HEAD",
+        });
+        return;
+      }
+      if (!reportRepository) {
+        sendError(res, 503, "reports_not_configured", "제보 채널 설정이 아직 완료되지 않았습니다.", cors);
+        return;
+      }
+      try {
+        const flags = configRepository
+          ? (await configRepository.get()).config
+          : { publicList: true, maintenanceMode: false };
+        if (flags.maintenanceMode) {
+          throw new RequestError(503, "maintenance_mode", "현재 점검 중입니다.");
+        }
+        if (!flags.publicList) {
+          throw new RequestError(403, "feature_disabled", "공개 명단 기능이 꺼져 있습니다.");
+        }
+        const report = await reportRepository.getApprovedById(reportId);
+        sendJson(res, 200, { report }, cors);
+      } catch (error) {
+        sendRouteError(res, error, cors);
       }
       return;
     }

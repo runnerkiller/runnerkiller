@@ -5,6 +5,7 @@ import { loadEnvFile } from "./env.js";
 import { buildConfig } from "./config.js";
 import { createDiscordClient } from "./discordClient.js";
 import { createConfigRepository } from "./repositories/configRepository.js";
+import { createReportRepository } from "./repositories/reportRepository.js";
 import { createHealthService } from "./health.js";
 import { createServer } from "./server.js";
 
@@ -35,6 +36,17 @@ const configRepository = createConfigRepository({
   messageId: config.discord.configMessageId,
 });
 
+const reportRepository =
+  config.discord.channels.reportsPending && config.discord.channels.reportsApproved
+    ? createReportRepository({
+        discordClient,
+        pendingChannelId: config.discord.channels.reportsPending,
+        approvedChannelId: config.discord.channels.reportsApproved,
+        onInvalidRecord: (error, message) =>
+          console.warn(`제보 메시지 ${message?.id ?? "?"}를 건너뜁니다:`, error.message),
+      })
+    : null;
+
 const healthService = createHealthService({
   discordClient,
   configRepository,
@@ -46,6 +58,9 @@ const healthService = createHealthService({
 
 const server = createServer({
   healthService,
+  configRepository,
+  reportRepository,
+  devReporterDiscordId: config.devReporterDiscordId,
   publicSiteOrigin: config.publicSiteOrigin,
   onError: (error) => console.error("요청 처리 중 오류:", error),
 });
