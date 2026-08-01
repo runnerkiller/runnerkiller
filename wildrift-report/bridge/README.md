@@ -194,6 +194,47 @@ npm start
 
 환경변수가 잘못되면 무엇이 잘못됐는지 전부 한 번에 알려주고 종료한다.
 
+### 5-1. 무료 클라우드에 24시간 띄우기 (Render)
+
+GitHub Pages는 정적 파일만 서빙하므로, Bridge는 어딘가 다른 곳에서 계속 켜져 있어야 한다.
+카드 등록 없이 무료로 쓸 수 있는 [Render](https://render.com)를 기준으로 적는다. 저장소
+루트에 있는 `render.yaml`이 서비스 정의를 이미 담고 있어 Blueprint로 한 번에 만들 수 있다.
+
+1. Render에 GitHub 계정으로 로그인한다.
+2. **New → Blueprint**를 선택하고 이 저장소(`runnerkiller/runnerkiller`)를 연결한다.
+3. Render가 `render.yaml`을 읽어 `wildrift-report-bridge` 서비스를 만든다. 이 파일은
+   `rootDir: wildrift-report/bridge`로 지정돼 있어 Bridge 폴더만 실행한다.
+4. `sync: false`로 표시된 환경변수는 Render가 값을 직접 입력하라고 물어본다.
+   **여기서만 입력한다 — 채팅, 커밋, 다른 어디에도 붙여넣지 않는다.** 필요한 값은
+   4절 표와 동일하다 (`DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`,
+   `DISCORD_CONFIG_CHANNEL_ID`, `DISCORD_CONFIG_MESSAGE_ID` 등).
+   - `PUBLIC_SITE_ORIGIN`은 `https://<깃허브계정>.github.io` (끝에 `/` 없이).
+   - `SESSION_SIGNING_SECRET`은 `generateValue: true`라 Render가 자동으로 안전한 값을 만든다.
+5. 배포가 끝나면 Render가 `https://wildrift-report-bridge-XXXX.onrender.com` 같은
+   주소를 준다. 이 주소를 6절 `/health`로 확인한다.
+6. **무료 플랜은 15분간 요청이 없으면 잠든다.** 첫 요청이 30초 정도 느릴 수 있다.
+   방문자가 거의 없는 초기 단계에서는 감수할 만하지만, 계속 켜두고 싶으면 유료 플랜이나
+   `cron-job.org` 같은 무료 핑 서비스로 `/health`를 주기적으로 불러 깨어있게 할 수 있다.
+7. Bridge 코드를 고쳐 `main`에 push하면 Render가 자동으로 다시 배포한다.
+
+Render 대신 Fly.io 등 다른 Node.js 호스팅을 써도 된다 — `render.yaml`만 안 쓰면 되고
+나머지 절차(`npm start`, 환경변수, `/health`)는 동일하다.
+
+### 5-2. 웹사이트가 이 Bridge를 쓰도록 연결하기
+
+Bridge 주소를 얻었으면 `wildrift-report/runtime-config.js`를 고친다.
+
+```js
+WR.RUNTIME = Object.freeze({
+  mode: "discord",
+  bridgeUrl: "https://wildrift-report-bridge-XXXX.onrender.com",
+});
+```
+
+`main`에 push하면 GitHub Pages가 다시 배포되고, 사이트가 데모 모드 대신 이 Bridge를 통해
+Discord에 저장된 데이터를 읽고 쓰기 시작한다. 이 파일에는 봇 토큰이나 비밀값을 절대
+넣지 않는다 — 공개 저장소에 그대로 노출된다.
+
 ## 6. 상태 확인
 
 ```bash

@@ -1,0 +1,52 @@
+services:
+  - type: web
+    name: wildrift-report-bridge
+    runtime: node
+    plan: free
+    rootDir: wildrift-report/bridge
+    buildCommand: "echo 'no dependencies to install'"
+    startCommand: "node src/index.js"
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: PUBLIC_SITE_ORIGIN
+        sync: false
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_APPLICATION_ID
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_GUILD_ID
+        sync: false
+      - key: DISCORD_ADMIN_ROLE_ID
+        sync: false
+      - key: DISCORD_CONFIG_CHANNEL_ID
+        sync: false
+      - key: DISCORD_CONFIG_MESSAGE_ID
+        sync: false
+      - key: DISCORD_USERS_CHANNEL_ID
+        sync: false
+      - key: DISCORD_VERIFICATIONS_CHANNEL_ID
+        sync: false
+      - key: DISCORD_REPORTS_PENDING_CHANNEL_ID
+        sync: false
+      - key: DISCORD_REPORTS_APPROVED_CHANNEL_ID
+        sync: false
+      - key: DISCORD_REPORTS_REJECTED_CHANNEL_ID
+        sync: false
+      - key: DISCORD_VOTES_CHANNEL_ID
+        sync: false
+      - key: DISCORD_AUDIT_LOG_CHANNEL_ID
+        sync: false
+      - key: DISCORD_ERRORS_CHANNEL_ID
+        sync: false
+      - key: SESSION_SIGNING_SECRET
+        generateValue: true
+      - key: BRIDGE_PUBLIC_URL
+        sync: false
+      - key: DEV_REPORTER_DISCORD_ID
+        sync: false
