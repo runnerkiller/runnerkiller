@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import { loadEnvFile } from "./env.js";
 import { buildConfig } from "./config.js";
 import { createDiscordClient } from "./discordClient.js";
+import { createAuthService } from "./auth/authService.js";
+import { createAuditRepository } from "./repositories/auditRepository.js";
 import { createConfigRepository } from "./repositories/configRepository.js";
 import { createReportRepository } from "./repositories/reportRepository.js";
 import { createHealthService } from "./health.js";
@@ -19,7 +21,9 @@ if (!config.ok) {
   for (const problem of config.errors) {
     console.error(`  - ${problem.key}: ${problem.message}`);
   }
-  console.error("\nbridge/.env.example을 복사해 bridge/.env를 만들고 값을 채우세요.");
+  console.error(
+    "\nbridge/.env.example을 복사해 bridge/.env를 만들고 값을 채우세요.",
+  );
   console.error("설정 방법은 bridge/README.md를 참고하세요.");
   process.exit(1);
 }
@@ -36,16 +40,52 @@ const configRepository = createConfigRepository({
   messageId: config.discord.configMessageId,
 });
 
+const auditRepository = config.discord.channels.auditLog
+  ? createAuditRepository({
+      discordClient,
+      channelId: config.discord.channels.auditLog,
+    })
+  : null;
+
 const reportRepository =
-  config.discord.channels.reportsPending && config.discord.channels.reportsApproved
+  config.discord.channels.reportsPending &&
+  config.discord.channels.reportsApproved
     ? createReportRepository({
         discordClient,
         pendingChannelId: config.discord.channels.reportsPending,
         approvedChannelId: config.discord.channels.reportsApproved,
+        rejectedChannelId: config.discord.channels.reportsRejected,
+        auditRepository,
         onInvalidRecord: (error, message) =>
-          console.warn(`제보 메시지 ${message?.id ?? "?"}를 건너뜁니다:`, error.message),
+          console.warn(
+            `제보 메시지 ${message?.id ?? "?"}를 건너뜁니다:`,
+            error.message,
+          ),
       })
     : null;
+
+const oauthReady = Boolean(
+  config.discord.clientId &&
+    config.discord.clientSecret &&
+    config.bridgePublicUrl &&
+    config.publicSiteOrigin &&
+    config.sessionSigningSecret &&
+    config.discord.guildId &&
+    config.discord.adminRoleId,
+);
+
+const authService = oauthReady
+  ? createAuthService({
+      clientId: config.discord.clientId,
+      clientSecret: config.discord.clientSecret,
+      bridgePublicUrl: config.bridgePublicUrl,
+      publicSiteOrigin: config.publicSiteOrigin,
+      sessionSecret: config.sessionSigningSecret,
+      guildId: config.discord.guildId,
+      adminRoleId: config.discord.adminRoleId,
+      discordClient,
+    })
+  : null;
 
 const healthService = createHealthService({
   discordClient,
@@ -60,6 +100,7 @@ const server = createServer({
   healthService,
   configRepository,
   reportRepository,
+  authService,
   devReporterDiscordId: config.devReporterDiscordId,
   publicSiteOrigin: config.publicSiteOrigin,
   onError: (error) => console.error("요청 처리 중 오류:", error),

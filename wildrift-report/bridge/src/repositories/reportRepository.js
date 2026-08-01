@@ -94,12 +94,42 @@ export function createReportRepository({
   discordClient,
   pendingChannelId,
   approvedChannelId,
+  rejectedChannelId = null,
+  auditRepository = null,
+  fetchImpl = globalThis.fetch,
   now = () => Date.now(),
   onInvalidRecord = () => {},
 }) {
   if (!discordClient) throw new Error("discordClient가 필요합니다.");
-  if (!pendingChannelId) throw new Error("DISCORD_REPORTS_PENDING_CHANNEL_ID가 필요합니다.");
-  if (!approvedChannelId) throw new Error("DISCORD_REPORTS_APPROVED_CHANNEL_ID가 필요합니다.");
+  if (!pendingChannelId)
+    throw new Error("DISCORD_REPORTS_PENDING_CHANNEL_ID가 필요합니다.");
+  if (!approvedChannelId)
+    throw new Error("DISCORD_REPORTS_APPROVED_CHANNEL_ID가 필요합니다.");
+
+  async function downloadAttachments(attachments = []) {
+    const files = [];
+    for (const attachment of attachments) {
+      let response;
+      try {
+        response = await fetchImpl(attachment.url);
+      } catch (cause) {
+        const error = new Error("Discord 증거 사진을 복제하지 못했습니다.");
+        error.cause = cause;
+        throw error;
+      }
+      if (!response.ok) {
+        throw new Error(`Discord 증거 사진 다운로드 실패 (${response.status})`);
+      }
+      const data = Buffer.from(await response.arrayBuffer());
+      files.push({
+        data,
+        filename: attachment.filename,
+        contentType: attachment.content_type ?? "application/octet-stream",
+        description: attachment.description ?? "증거 사진",
+      });
+    }
+    return files;
+  }
 
   async function create(input, evidenceFiles = []) {
     const timestamp = new Date(now()).toISOString();
@@ -141,11 +171,15 @@ export function createReportRepository({
 
     for (const message of messages) {
       try {
-        const report = parseReportMessage(message, { expectedStatus: "approved" });
+        const report = parseReportMessage(message, {
+          expectedStatus: "approved",
+        });
         if (options.category && report.category !== options.category) continue;
         if (
           options.query &&
-          !report.nicknameNormalized.includes(String(options.query).trim().toLowerCase())
+          !report.nicknameNormalized.includes(
+            String(options.query).trim().toLowerCase(),
+          )
         ) {
           continue;
         }
@@ -158,13 +192,43 @@ export function createReportRepository({
     return {
       reports,
       nextCursor:
-        messages.length === limit ? messages[messages.length - 1]?.id ?? null : null,
+        messages.length === limit
+          ? (messages[messages.length - 1]?.id ?? null)
+          : null,
+    };
+  }
+
+  async function listPending(options = {}) {
+    const limit = Math.min(Math.max(Number(options.limit) || 30, 1), 100);
+    const messages = await discordClient.getChannelMessages(pendingChannelId, {
+      limit,
+      before: options.before ?? undefined,
+    });
+    const reports = [];
+    for (const message of messages) {
+      try {
+        reports.push(
+          parseReportMessage(message, { expectedStatus: "pending" }),
+        );
+      } catch (error) {
+        onInvalidRecord(error, message);
+      }
+    }
+    return {
+      reports,
+      nextCursor:
+        messages.length === limit
+          ? (messages[messages.length - 1]?.id ?? null)
+          : null,
     };
   }
 
   async function getApprovedById(reportId) {
     try {
-      const message = await discordClient.getMessage(approvedChannelId, reportId);
+      const message = await discordClient.getMessage(
+        approvedChannelId,
+        reportId,
+      );
       return toPublicReport(
         parseReportMessage(message, { expectedStatus: "approved" }),
       );
@@ -179,5 +243,133 @@ export function createReportRepository({
     }
   }
 
-  return { create, listApproved, getApprovedById };
+  async function decide(reportId, status, adminDiscordId) {
+    if (!["approved", "rejected"].includes(status)) {
+      throw new Error("승인 또는 반려 상태만 처리할 수 있습니다.");
+    }
+    const targetChannelId =
+      status === "approved" ? approvedChannelId : rejectedChannelId;
+    if (!targetChannelId) {
+      throw new Error(
+        status === "approved"
+          ? "승인 제보 채널이 설정되지 않았습니다."
+          : "반려 제보 채널이 설정되지 않았습니다.",
+      );
+    }
+    if (!auditRepository) {
+      throw new Error("감사 로그 저장소가 설정되지 않았습니다.");
+    }
+
+    const recentDestinationMessages = await discordClient.getChannelMessages(
+      targetChannelId,
+      { limit: 100 },
+    );
+    let existingDecision = null;
+    for (const message of recentDestinationMessages) {
+      try {
+        const candidate = parseReportMessage(message, {
+          expectedStatus: status,
+        });
+        if (candidate.originReportId === reportId) {
+          existingDecision = { message, report: candidate };
+          break;
+        }
+      } catch (error) {
+        onInvalidRecord(error, message);
+      }
+    }
+
+    if (existingDecision) {
+      await auditRepository.create({
+        action: `report.${status}.recovered`,
+        targetId: reportId,
+        actorDiscordId: adminDiscordId,
+        before: { status: "pending" },
+        after: { status, reportId: existingDecision.message.id },
+        metadata: { reason: "existing_destination_record" },
+      });
+      let cleanupPending = false;
+      try {
+        await discordClient.deleteMessage(pendingChannelId, reportId);
+      } catch (error) {
+        if (!(error instanceof DiscordApiError && error.status === 404)) {
+          cleanupPending = true;
+          onInvalidRecord(error, existingDecision.message);
+        }
+      }
+      return {
+        report:
+          status === "approved"
+            ? toPublicReport(existingDecision.report)
+            : existingDecision.report,
+        cleanupPending,
+        recovered: true,
+      };
+    }
+
+    let sourceMessage;
+    try {
+      sourceMessage = await discordClient.getMessage(
+        pendingChannelId,
+        reportId,
+      );
+    } catch (error) {
+      if (error instanceof DiscordApiError && error.status === 404) {
+        throw new ReportNotFoundError(reportId);
+      }
+      throw error;
+    }
+    const source = parseReportMessage(sourceMessage, {
+      expectedStatus: "pending",
+    });
+    const files = await downloadAttachments(sourceMessage.attachments ?? []);
+    const timestamp = new Date(now()).toISOString();
+    const destinationRecord = {
+      ...source,
+      reportId: undefined,
+      evidence: undefined,
+      status,
+      originReportId: reportId,
+      updatedAt: timestamp,
+      reviewedByDiscordId: adminDiscordId,
+      reviewedAt: timestamp,
+    };
+    const storedRecord = Object.fromEntries(
+      Object.entries(destinationRecord).filter(
+        ([, value]) => value !== undefined,
+      ),
+    );
+    const destinationMessage = await discordClient.createMessage(
+      targetChannelId,
+      { content: buildReportMessageContent(storedRecord) },
+      files,
+    );
+
+    await auditRepository.create({
+      action: `report.${status}`,
+      targetId: reportId,
+      actorDiscordId: adminDiscordId,
+      before: { status: "pending" },
+      after: { status, reportId: destinationMessage.id },
+      metadata: { destinationChannelId: targetChannelId },
+    });
+
+    let cleanupPending = false;
+    try {
+      await discordClient.deleteMessage(pendingChannelId, reportId);
+    } catch (error) {
+      cleanupPending = true;
+      onInvalidRecord(error, sourceMessage);
+    }
+
+    const decided = parseReportMessage(destinationMessage, {
+      expectedStatus: status,
+    });
+    return {
+      report: status === "approved" ? toPublicReport(decided) : decided,
+      cleanupPending,
+    };
+  }
+
+  return { create, listApproved, listPending, getApprovedById, decide };
 }

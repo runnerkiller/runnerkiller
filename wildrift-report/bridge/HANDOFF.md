@@ -4,7 +4,41 @@
 > 큰 그림은 [`../DISCORD_BACKEND_PLAN.md`](../DISCORD_BACKEND_PLAN.md)를 먼저 읽어라.
 > 이 문서는 "그 계획 중 실제로 어디까지 됐고, 왜 그렇게 만들었는지"를 설명한다.
 
-## 현재 최신 상태 — 2단계 제보 저장 완료
+## 현재 최신 상태 — 3단계 OAuth와 관리자 검수 완료
+
+- 브랜치: `feat/discord-bridge-skeleton`이며 `main`에는 병합하지 않았다.
+- Bridge 버전: `0.3.0`
+- 로컬 Node.js 24에서 `npm test` 실행: **131개 전부 통과**
+- Discord 실제 토큰을 사용한 통합 테스트와 프런트엔드 연결은 아직 하지 않았다.
+- Discord OAuth Authorization Code 로그인, state 검증, 로그아웃을 구현했다.
+- 세션은 DB 없이 검증 가능한 HMAC 서명 쿠키이며 기본 8시간 후 만료된다.
+- `GET /api/me`는 로그인 사용자와 Discord 관리자 역할 여부를 반환한다.
+- 관리자 API는 매 요청마다 세션과 Discord 역할을 확인한다.
+- 승인·반려 시 원본 제보와 사진을 대상 채널로 복제하고 감사 로그를 남긴 뒤 대기 메시지를 삭제한다.
+- OAuth가 활성화되면 제보 제출자는 `DEV_REPORTER_DISCORD_ID`가 아니라 로그인 사용자 ID다.
+
+### 3단계 핵심 파일
+
+```text
+src/auth/authService.js                  OAuth, state, 서명 세션, 관리자 역할
+src/repositories/auditRepository.js      관리자 조작 감사 이벤트
+src/repositories/reportRepository.js     대기 목록, 승인·반려, 사진 복제
+src/server.js                            auth/me/admin HTTP API
+tests/authService.test.js                OAuth와 세션 테스트
+tests/auditRepository.test.js            감사 로그 테스트
+```
+
+### 다음 에이전트가 할 일 — 계획서 13절 4단계
+
+1. `userRepository.js`와 `verificationRepository.js`를 Discord 메시지 저장 방식으로 구현한다.
+2. 로그인 사용자가 게임 닉네임과 인증 사진을 제출하는 API를 만든다.
+3. 관리자의 인증 대기 목록, 승인·거절 API를 만들고 모든 판정을 감사 로그에 남긴다.
+4. 정지 사용자 여부를 제보 제출과 이후 투표 요청 전에 검사한다.
+5. 프런트엔드 로그인 버튼과 `/api/me`를 연결하고 기존 자체 아이디/비밀번호 화면은 기능 플래그 뒤로 이동한다.
+6. 실제 비공개 Discord 개발 서버에서 OAuth 콜백, 쿠키, 사진 복제, 역할 판정을 통합 테스트한다.
+7. `PUBLIC_SITE_ORIGIN`과 `BRIDGE_PUBLIC_URL`이 HTTPS 실제 주소로 설정되기 전에는 운영 배포로 간주하지 않는다.
+
+## 2단계 완료 기록
 
 - 브랜치: `feat/discord-bridge-skeleton`
 - Bridge 버전: `0.2.0`
@@ -29,7 +63,7 @@ tests/reportValidation.test.js           입력 검증 테스트
 tests/reportRepository.test.js           저장소 테스트
 ```
 
-### 다음 에이전트가 할 일 — 계획서 13절 3단계
+### 3단계 구현에 사용한 지시 (완료됨)
 
 1. Discord OAuth Authorization Code 로그인과 HttpOnly 서명 쿠키를 구현한다.
 2. `DEV_REPORTER_DISCORD_ID`를 실제 로그인 사용자의 Discord ID로 교체한다.
@@ -53,15 +87,15 @@ tests/reportRepository.test.js           저장소 테스트
 
 ## 계획서 대비 구현 매핑 (16절 체크리스트)
 
-| 계획서 16절 항목 | 구현 위치 | 상태 |
-|---|---|---|
-| 1. 최신 main 기준 작업 브랜치 | `feat/discord-bridge-skeleton` | 완료 |
-| 2. `bridge/` Node.js 프로젝트 골격 | `bridge/package.json`, `bridge/src/` | 완료 |
-| 3. `.env.example`, `.gitignore`, `bridge/README.md` | 각각 존재 | 완료 |
-| 4. Discord 연결 설정 검증 + `GET /health` | `src/config.js` + `src/health.js` + `src/server.js` | 완료 |
-| 5. `configRepository.get()` | `src/repositories/configRepository.js` | 완료 |
-| 6. 단위 테스트에서 Discord HTTP 호출 모킹 | `tests/helpers/mockDiscord.js` 사용, 실 네트워크 없음 | 완료 (테스트 75개) |
-| 7. 실행·테스트 결과와 다음 단계 제한사항을 PR 설명에 기록 | 이 문서 + 커밋 메시지 | PR을 열 때 이 문서 내용을 요약해서 쓸 것 |
+| 계획서 16절 항목                                          | 구현 위치                                             | 상태                                     |
+| --------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------- |
+| 1. 최신 main 기준 작업 브랜치                             | `feat/discord-bridge-skeleton`                        | 완료                                     |
+| 2. `bridge/` Node.js 프로젝트 골격                        | `bridge/package.json`, `bridge/src/`                  | 완료                                     |
+| 3. `.env.example`, `.gitignore`, `bridge/README.md`       | 각각 존재                                             | 완료                                     |
+| 4. Discord 연결 설정 검증 + `GET /health`                 | `src/config.js` + `src/health.js` + `src/server.js`   | 완료                                     |
+| 5. `configRepository.get()`                               | `src/repositories/configRepository.js`                | 완료                                     |
+| 6. 단위 테스트에서 Discord HTTP 호출 모킹                 | `tests/helpers/mockDiscord.js` 사용, 실 네트워크 없음 | 완료 (테스트 75개)                       |
+| 7. 실행·테스트 결과와 다음 단계 제한사항을 PR 설명에 기록 | 이 문서 + 커밋 메시지                                 | PR을 열 때 이 문서 내용을 요약해서 쓸 것 |
 
 ## 왜 이렇게 만들었나 (설계 결정)
 

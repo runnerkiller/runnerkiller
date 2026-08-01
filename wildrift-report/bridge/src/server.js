@@ -1,5 +1,10 @@
 import { createServer as createHttpServer } from "node:http";
 
+import {
+  AuthError,
+  OAUTH_STATE_COOKIE,
+  parseCookies,
+} from "./auth/authService.js";
 import { DiscordApiError } from "./discordClient.js";
 import { ReportNotFoundError } from "./repositories/reportRepository.js";
 import {
@@ -25,6 +30,16 @@ function sendError(res, status, code, message, extraHeaders = {}) {
   sendJson(res, status, { error: { code, message } }, extraHeaders);
 }
 
+function sendRedirect(res, location, cookies = [], extraHeaders = {}) {
+  res.writeHead(302, {
+    Location: location,
+    "Cache-Control": "no-store",
+    ...(cookies.length > 0 ? { "Set-Cookie": cookies } : {}),
+    ...extraHeaders,
+  });
+  res.end();
+}
+
 class RequestError extends Error {
   constructor(status, code, message) {
     super(message);
@@ -40,7 +55,11 @@ async function readJsonBody(req, maxBytes = 22 * 1024 * 1024) {
   for await (const chunk of req) {
     size += chunk.length;
     if (size > maxBytes) {
-      throw new RequestError(413, "payload_too_large", "요청 본문이 너무 큽니다.");
+      throw new RequestError(
+        413,
+        "payload_too_large",
+        "요청 본문이 너무 큽니다.",
+      );
     }
     chunks.push(chunk);
   }
@@ -51,7 +70,11 @@ async function readJsonBody(req, maxBytes = 22 * 1024 * 1024) {
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
-    throw new RequestError(400, "invalid_json", "JSON 형식이 올바르지 않습니다.");
+    throw new RequestError(
+      400,
+      "invalid_json",
+      "JSON 형식이 올바르지 않습니다.",
+    );
   }
 }
 
@@ -60,8 +83,17 @@ function reportIdFromPath(pathname) {
   return match?.[1] ?? null;
 }
 
+function adminDecisionIdFromPath(pathname) {
+  const match = pathname.match(/^\/api\/admin\/reports\/(\d{17,20})\/status$/);
+  return match?.[1] ?? null;
+}
+
 function sendRouteError(res, error, cors) {
   if (error instanceof RequestError) {
+    sendError(res, error.status, error.code, error.message, cors);
+    return;
+  }
+  if (error instanceof AuthError) {
     sendError(res, error.status, error.code, error.message, cors);
     return;
   }
@@ -69,7 +101,13 @@ function sendRouteError(res, error, cors) {
     sendJson(
       res,
       422,
-      { error: { code: "validation_failed", message: error.message, issues: error.issues } },
+      {
+        error: {
+          code: "validation_failed",
+          message: error.message,
+          issues: error.issues,
+        },
+      },
       cors,
     );
     return;
@@ -79,7 +117,13 @@ function sendRouteError(res, error, cors) {
     return;
   }
   if (error instanceof DiscordApiError) {
-    sendError(res, 502, "discord_unavailable", "Discord 저장소 요청에 실패했습니다.", cors);
+    sendError(
+      res,
+      502,
+      "discord_unavailable",
+      "Discord 저장소 요청에 실패했습니다.",
+      cors,
+    );
     return;
   }
   throw error;
@@ -105,6 +149,7 @@ export function createRequestHandler({
   healthService,
   configRepository = null,
   reportRepository = null,
+  authService = null,
   devReporterDiscordId = null,
   publicSiteOrigin = null,
 }) {
@@ -116,7 +161,13 @@ export function createRequestHandler({
     try {
       url = new URL(req.url, "http://localhost");
     } catch {
-      sendError(res, 400, "bad_request", "요청 경로를 해석할 수 없습니다.", cors);
+      sendError(
+        res,
+        400,
+        "bad_request",
+        "요청 경로를 해석할 수 없습니다.",
+        cors,
+      );
       return;
     }
 
@@ -151,6 +202,208 @@ export function createRequestHandler({
       return;
     }
 
+    if (url.pathname === "/api/auth/discord") {
+      if (req.method !== "GET") {
+        sendError(res, 405, "method_not_allowed", "GET만 지원합니다.", {
+          ...cors,
+          Allow: "GET",
+        });
+        return;
+      }
+      if (!authService) {
+        sendError(
+          res,
+          503,
+          "auth_not_configured",
+          "Discord 로그인 설정이 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      const login = authService.startLogin(
+        url.searchParams.get("returnTo") || "/",
+      );
+      sendRedirect(res, login.url, [login.stateCookie]);
+      return;
+    }
+
+    if (url.pathname === "/api/auth/discord/callback") {
+      if (req.method !== "GET") {
+        sendError(res, 405, "method_not_allowed", "GET만 지원합니다.", cors);
+        return;
+      }
+      if (!authService) {
+        sendError(
+          res,
+          503,
+          "auth_not_configured",
+          "Discord 로그인 설정이 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        const cookies = parseCookies(req.headers.cookie);
+        const result = await authService.finishLogin({
+          code: url.searchParams.get("code"),
+          state: url.searchParams.get("state"),
+          stateCookie: cookies[OAUTH_STATE_COOKIE],
+        });
+        sendRedirect(res, result.redirectUrl, [
+          result.sessionCookie,
+          result.clearStateCookie,
+        ]);
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/auth/logout") {
+      if (req.method !== "POST") {
+        sendError(res, 405, "method_not_allowed", "POST만 지원합니다.", cors);
+        return;
+      }
+      if (!authService) {
+        sendError(
+          res,
+          503,
+          "auth_not_configured",
+          "Discord 로그인 설정이 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      res.writeHead(204, { ...cors, "Set-Cookie": authService.logoutCookie() });
+      res.end();
+      return;
+    }
+
+    if (url.pathname === "/api/me") {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        sendError(res, 405, "method_not_allowed", "GET만 지원합니다.", cors);
+        return;
+      }
+      if (!authService) {
+        sendError(
+          res,
+          503,
+          "auth_not_configured",
+          "Discord 로그인 설정이 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        const user = authService.authenticate(req.headers.cookie);
+        const admin = await authService.isAdmin(user.id);
+        sendJson(res, 200, { user: { ...user, admin } }, cors);
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/admin/reports") {
+      if (!reportRepository) {
+        sendError(
+          res,
+          503,
+          "reports_not_configured",
+          "제보 채널 설정이 아직 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      if (!authService) {
+        sendError(
+          res,
+          503,
+          "auth_not_configured",
+          "Discord 로그인 설정이 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        await authService.requireAdmin(req.headers.cookie);
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          throw new RequestError(
+            405,
+            "method_not_allowed",
+            "GET만 지원합니다.",
+          );
+        }
+        const status = url.searchParams.get("status") || "pending";
+        if (status !== "pending") {
+          throw new RequestError(
+            400,
+            "unsupported_status",
+            "현재는 검수 대기 목록만 지원합니다.",
+          );
+        }
+        const result = await reportRepository.listPending({
+          before: url.searchParams.get("cursor") || null,
+          limit: url.searchParams.get("limit") || 30,
+        });
+        sendJson(res, 200, result, cors);
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    const adminDecisionId = adminDecisionIdFromPath(url.pathname);
+    if (adminDecisionId) {
+      if (!reportRepository) {
+        sendError(
+          res,
+          503,
+          "reports_not_configured",
+          "제보 채널 설정이 아직 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      if (!authService) {
+        sendError(
+          res,
+          503,
+          "auth_not_configured",
+          "Discord 로그인 설정이 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        const admin = await authService.requireAdmin(req.headers.cookie);
+        if (req.method !== "PATCH") {
+          throw new RequestError(
+            405,
+            "method_not_allowed",
+            "PATCH만 지원합니다.",
+          );
+        }
+        const body = await readJsonBody(req, 8 * 1024);
+        if (!["approved", "rejected"].includes(body.status)) {
+          throw new RequestError(
+            422,
+            "invalid_status",
+            "approved 또는 rejected만 허용합니다.",
+          );
+        }
+        const result = await reportRepository.decide(
+          adminDecisionId,
+          body.status,
+          admin.id,
+        );
+        sendJson(res, 200, result, cors);
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
     if (url.pathname === "/api/reports") {
       if (!reportRepository) {
         sendError(
@@ -175,16 +428,28 @@ export function createRequestHandler({
             };
 
         if (flags.maintenanceMode) {
-          throw new RequestError(503, "maintenance_mode", "현재 점검 중입니다.");
+          throw new RequestError(
+            503,
+            "maintenance_mode",
+            "현재 점검 중입니다.",
+          );
         }
 
         if (req.method === "GET" || req.method === "HEAD") {
           if (!flags.publicList) {
-            throw new RequestError(403, "feature_disabled", "공개 명단 기능이 꺼져 있습니다.");
+            throw new RequestError(
+              403,
+              "feature_disabled",
+              "공개 명단 기능이 꺼져 있습니다.",
+            );
           }
           const category = url.searchParams.get("category") || null;
           if (category && !Object.hasOwn(REPORT_CATEGORIES, category)) {
-            throw new RequestError(400, "invalid_category", "지원하지 않는 분류입니다.");
+            throw new RequestError(
+              400,
+              "invalid_category",
+              "지원하지 않는 분류입니다.",
+            );
           }
           const result = await reportRepository.listApproved({
             query: url.searchParams.get("query") || null,
@@ -198,26 +463,45 @@ export function createRequestHandler({
 
         if (req.method === "POST") {
           if (!flags.reportSubmission) {
-            throw new RequestError(403, "feature_disabled", "제보 제출 기능이 꺼져 있습니다.");
+            throw new RequestError(
+              403,
+              "feature_disabled",
+              "제보 제출 기능이 꺼져 있습니다.",
+            );
           }
-          if (!devReporterDiscordId) {
+          let reporterDiscordId = devReporterDiscordId;
+          if (flags.authentication !== false) {
+            if (!authService) {
+              throw new RequestError(
+                503,
+                "auth_not_configured",
+                "Discord 로그인 설정이 완료되지 않았습니다.",
+              );
+            }
+            reporterDiscordId = authService.authenticate(req.headers.cookie).id;
+          }
+          if (!reporterDiscordId) {
             throw new RequestError(
               503,
               "reporter_not_configured",
-              "로그인 구현 전 개발용 제출자 ID를 설정해야 합니다.",
+              "제보 제출자 설정이 필요합니다.",
             );
           }
           const body = await readJsonBody(req);
           const validated = validateReportSubmission(body, { flags });
           const report = await reportRepository.create(
-            { ...validated.report, reporterDiscordId: devReporterDiscordId },
+            { ...validated.report, reporterDiscordId },
             validated.evidenceFiles,
           );
           sendJson(res, 201, { report }, cors);
           return;
         }
 
-        throw new RequestError(405, "method_not_allowed", "GET과 POST만 지원합니다.");
+        throw new RequestError(
+          405,
+          "method_not_allowed",
+          "GET과 POST만 지원합니다.",
+        );
       } catch (error) {
         sendRouteError(res, error, cors);
       }
@@ -234,7 +518,13 @@ export function createRequestHandler({
         return;
       }
       if (!reportRepository) {
-        sendError(res, 503, "reports_not_configured", "제보 채널 설정이 아직 완료되지 않았습니다.", cors);
+        sendError(
+          res,
+          503,
+          "reports_not_configured",
+          "제보 채널 설정이 아직 완료되지 않았습니다.",
+          cors,
+        );
         return;
       }
       try {
@@ -242,10 +532,18 @@ export function createRequestHandler({
           ? (await configRepository.get()).config
           : { publicList: true, maintenanceMode: false };
         if (flags.maintenanceMode) {
-          throw new RequestError(503, "maintenance_mode", "현재 점검 중입니다.");
+          throw new RequestError(
+            503,
+            "maintenance_mode",
+            "현재 점검 중입니다.",
+          );
         }
         if (!flags.publicList) {
-          throw new RequestError(403, "feature_disabled", "공개 명단 기능이 꺼져 있습니다.");
+          throw new RequestError(
+            403,
+            "feature_disabled",
+            "공개 명단 기능이 꺼져 있습니다.",
+          );
         }
         const report = await reportRepository.getApprovedById(reportId);
         sendJson(res, 200, { report }, cors);

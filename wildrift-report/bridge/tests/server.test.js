@@ -1,6 +1,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 
+import { AuthError } from "../src/auth/authService.js";
 import { createServer } from "../src/server.js";
 import { ReportNotFoundError } from "../src/repositories/reportRepository.js";
 
@@ -13,10 +14,13 @@ let featureFlags = {
   reportSubmission: true,
   evidenceUpload: true,
   evidenceRequired: false,
+  authentication: false,
   maintenanceMode: false,
 };
 let approvedReports = [];
+let pendingReports = [];
 let createdInput = null;
+let decisionInput = null;
 
 const healthService = {
   async check() {
@@ -46,6 +50,51 @@ const reportRepository = {
     createdInput = { report, evidenceFiles };
     return { reportId: "333333333333333333", status: "pending", ...report };
   },
+  async listPending(options) {
+    return { reports: pendingReports, nextCursor: null, options };
+  },
+  async decide(reportId, status, adminId) {
+    decisionInput = { reportId, status, adminId };
+    return {
+      report: { reportId: "999999999999999999", status },
+      cleanupPending: false,
+    };
+  },
+};
+
+const authService = {
+  startLogin(returnTo) {
+    return {
+      url: `https://discord.com/oauth2/authorize?returnTo=${encodeURIComponent(returnTo)}`,
+      stateCookie: "wr_oauth_state=state; HttpOnly",
+    };
+  },
+  async finishLogin() {
+    return {
+      redirectUrl: `${SITE_ORIGIN}/wildrift-report/`,
+      sessionCookie: "wr_session=valid; HttpOnly",
+      clearStateCookie: "wr_oauth_state=; Max-Age=0",
+    };
+  },
+  authenticate(cookie) {
+    if (!String(cookie).includes("wr_session=valid")) {
+      throw new AuthError(
+        401,
+        "authentication_required",
+        "Discord 로그인이 필요합니다.",
+      );
+    }
+    return { id: "777777777777777777", username: "tester" };
+  },
+  async isAdmin(userId) {
+    return userId === "777777777777777777";
+  },
+  async requireAdmin(cookie) {
+    return this.authenticate(cookie);
+  },
+  logoutCookie() {
+    return "wr_session=; Max-Age=0";
+  },
 };
 
 let server;
@@ -56,6 +105,7 @@ before(async () => {
     healthService,
     configRepository,
     reportRepository,
+    authService,
     devReporterDiscordId: "444444444444444444",
     publicSiteOrigin: SITE_ORIGIN,
   });
@@ -133,9 +183,15 @@ describe("없는 경로", () => {
 describe("reports API", () => {
   test("GET /api/reports가 승인 목록을 반환한다", async () => {
     approvedReports = [
-      { reportId: "333333333333333333", nickname: "협곡의파괴자", status: "approved" },
+      {
+        reportId: "333333333333333333",
+        nickname: "협곡의파괴자",
+        status: "approved",
+      },
     ];
-    const response = await fetch(`${baseUrl}/api/reports?category=troll&query=협곡`);
+    const response = await fetch(
+      `${baseUrl}/api/reports?category=troll&query=협곡`,
+    );
     const body = await response.json();
     assert.equal(response.status, 200);
     assert.equal(body.reports.length, 1);
@@ -151,7 +207,11 @@ describe("reports API", () => {
 
   test("GET /api/reports/:id가 승인 제보 상세를 반환한다", async () => {
     approvedReports = [
-      { reportId: "333333333333333333", nickname: "협곡의파괴자", status: "approved" },
+      {
+        reportId: "333333333333333333",
+        nickname: "협곡의파괴자",
+        status: "approved",
+      },
     ];
     const response = await fetch(`${baseUrl}/api/reports/333333333333333333`);
     const body = await response.json();
@@ -186,6 +246,29 @@ describe("reports API", () => {
     assert.equal(response.status, 201);
     assert.equal(body.report.status, "pending");
     assert.equal(createdInput.report.reporterDiscordId, "444444444444444444");
+  });
+
+  test("인증 기능이 켜지면 로그인한 Discord ID를 제출자로 사용한다", async () => {
+    featureFlags = { ...featureFlags, authentication: true };
+    const response = await fetch(`${baseUrl}/api/reports`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "wr_session=valid",
+      },
+      body: JSON.stringify({
+        nickname: "협곡의파괴자",
+        category: "troll",
+        tags: ["고의 피딩"],
+        mode: "랭크",
+        occurredAt: "2026-08-01",
+        description: "한타 직전에 반복적으로 적진으로 들어가 사망했습니다.",
+        evidence: [],
+      }),
+    });
+    featureFlags = { ...featureFlags, authentication: false };
+    assert.equal(response.status, 201);
+    assert.equal(createdInput.report.reporterDiscordId, "777777777777777777");
   });
 
   test("입력 오류는 필드별 422를 반환한다", async () => {
@@ -225,6 +308,102 @@ describe("reports API", () => {
   });
 });
 
+describe("Discord auth API", () => {
+  test("로그인 시작은 Discord로 리디렉션하고 state 쿠키를 설정한다", async () => {
+    const response = await fetch(
+      `${baseUrl}/api/auth/discord?returnTo=/wildrift-report/`,
+      {
+        redirect: "manual",
+      },
+    );
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get("location"), /discord\.com/);
+    assert.match(response.headers.get("set-cookie"), /wr_oauth_state/);
+  });
+
+  test("세션이 없으면 /api/me가 401", async () => {
+    const response = await fetch(`${baseUrl}/api/me`);
+    const body = await response.json();
+    assert.equal(response.status, 401);
+    assert.equal(body.error.code, "authentication_required");
+  });
+
+  test("로그인 세션의 사용자와 관리자 여부를 반환한다", async () => {
+    const response = await fetch(`${baseUrl}/api/me`, {
+      headers: { Cookie: "wr_session=valid" },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.user.id, "777777777777777777");
+    assert.equal(body.user.admin, true);
+  });
+
+  test("로그아웃은 세션 쿠키를 만료시킨다", async () => {
+    const response = await fetch(`${baseUrl}/api/auth/logout`, {
+      method: "POST",
+    });
+    assert.equal(response.status, 204);
+    assert.match(response.headers.get("set-cookie"), /Max-Age=0/);
+  });
+});
+
+describe("admin reports API", () => {
+  test("관리자 세션이 없으면 대기 목록을 볼 수 없다", async () => {
+    const response = await fetch(`${baseUrl}/api/admin/reports`);
+    assert.equal(response.status, 401);
+  });
+
+  test("관리자는 대기 제보 목록을 조회한다", async () => {
+    pendingReports = [{ reportId: "333333333333333333", status: "pending" }];
+    const response = await fetch(`${baseUrl}/api/admin/reports`, {
+      headers: { Cookie: "wr_session=valid" },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.reports.length, 1);
+  });
+
+  test("관리자는 제보를 승인한다", async () => {
+    decisionInput = null;
+    const response = await fetch(
+      `${baseUrl}/api/admin/reports/333333333333333333/status`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: "wr_session=valid",
+        },
+        body: JSON.stringify({ status: "approved" }),
+      },
+    );
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.report.status, "approved");
+    assert.deepEqual(decisionInput, {
+      reportId: "333333333333333333",
+      status: "approved",
+      adminId: "777777777777777777",
+    });
+  });
+
+  test("잘못된 판정 상태는 422", async () => {
+    const response = await fetch(
+      `${baseUrl}/api/admin/reports/333333333333333333/status`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: "wr_session=valid",
+        },
+        body: JSON.stringify({ status: "hidden" }),
+      },
+    );
+    const body = await response.json();
+    assert.equal(response.status, 422);
+    assert.equal(body.error.code, "invalid_status");
+  });
+});
+
 describe("CORS", () => {
   test("허용된 출처에만 CORS 헤더를 붙인다", async () => {
     healthResult = { status: "ok" };
@@ -232,8 +411,14 @@ describe("CORS", () => {
       headers: { Origin: SITE_ORIGIN },
     });
 
-    assert.equal(response.headers.get("access-control-allow-origin"), SITE_ORIGIN);
-    assert.equal(response.headers.get("access-control-allow-credentials"), "true");
+    assert.equal(
+      response.headers.get("access-control-allow-origin"),
+      SITE_ORIGIN,
+    );
+    assert.equal(
+      response.headers.get("access-control-allow-credentials"),
+      "true",
+    );
     assert.equal(response.headers.get("vary"), "Origin");
   });
 
@@ -258,7 +443,10 @@ describe("CORS", () => {
     });
 
     assert.equal(response.status, 204);
-    assert.equal(response.headers.get("access-control-allow-origin"), SITE_ORIGIN);
+    assert.equal(
+      response.headers.get("access-control-allow-origin"),
+      SITE_ORIGIN,
+    );
     assert.match(response.headers.get("access-control-allow-methods"), /GET/);
   });
 

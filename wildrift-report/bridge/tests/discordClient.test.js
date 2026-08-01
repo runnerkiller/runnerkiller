@@ -26,7 +26,10 @@ describe("createDiscordClient", () => {
   });
 
   test("봇 인증 헤더를 붙인다", async () => {
-    const { client, fetchImpl } = makeClient({ status: 200, body: { id: "1" } });
+    const { client, fetchImpl } = makeClient({
+      status: 200,
+      body: { id: "1" },
+    });
     await client.getCurrentUser();
 
     const { url, init } = fetchImpl.calls[0];
@@ -42,8 +45,33 @@ describe("createDiscordClient", () => {
     });
     const message = await client.getMessage("123", "456");
 
-    assert.equal(fetchImpl.calls[0].url, `${DISCORD_API_BASE}/channels/123/messages/456`);
+    assert.equal(
+      fetchImpl.calls[0].url,
+      `${DISCORD_API_BASE}/channels/123/messages/456`,
+    );
     assert.equal(message.content, "hi");
+  });
+
+  test("서버 멤버 역할 조회 경로가 올바르다", async () => {
+    const { client, fetchImpl } = makeClient({
+      status: 200,
+      body: { roles: [] },
+    });
+    await client.getGuildMember("123", "456");
+    assert.equal(
+      fetchImpl.calls[0].url,
+      `${DISCORD_API_BASE}/guilds/123/members/456`,
+    );
+  });
+
+  test("메시지 삭제 요청을 보낸다", async () => {
+    const { client, fetchImpl } = makeClient({ status: 204, body: "" });
+    await client.deleteMessage("123", "456");
+    assert.equal(
+      fetchImpl.calls[0].url,
+      `${DISCORD_API_BASE}/channels/123/messages/456`,
+    );
+    assert.equal(fetchImpl.calls[0].init.method, "DELETE");
   });
 
   test("채널 메시지 목록 쿼리를 보낸다", async () => {
@@ -56,7 +84,10 @@ describe("createDiscordClient", () => {
   });
 
   test("사진이 없는 메시지는 JSON으로 생성한다", async () => {
-    const { client, fetchImpl } = makeClient({ status: 200, body: { id: "9" } });
+    const { client, fetchImpl } = makeClient({
+      status: 200,
+      body: { id: "9" },
+    });
     await client.createMessage("123", { content: "hello" });
     const call = fetchImpl.calls[0];
     assert.equal(call.init.method, "POST");
@@ -65,19 +96,18 @@ describe("createDiscordClient", () => {
   });
 
   test("사진이 있으면 Discord multipart 형식으로 생성한다", async () => {
-    const { client, fetchImpl } = makeClient({ status: 200, body: { id: "9" } });
-    await client.createMessage(
-      "123",
-      { content: "hello" },
-      [
-        {
-          data: Buffer.from("image"),
-          contentType: "image/jpeg",
-          filename: "evidence.jpg",
-          description: "증거",
-        },
-      ],
-    );
+    const { client, fetchImpl } = makeClient({
+      status: 200,
+      body: { id: "9" },
+    });
+    await client.createMessage("123", { content: "hello" }, [
+      {
+        data: Buffer.from("image"),
+        contentType: "image/jpeg",
+        filename: "evidence.jpg",
+        description: "증거",
+      },
+    ]);
     const call = fetchImpl.calls[0];
     assert.ok(call.init.body instanceof FormData);
     assert.equal(call.init.headers["Content-Type"], undefined);

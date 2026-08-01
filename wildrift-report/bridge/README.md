@@ -9,22 +9,24 @@
 
 ## 지금 구현된 범위
 
-계획서 16절이 정한 첫 단계까지만 구현했다.
+계획서 13절의 3단계(Discord OAuth와 관리자 검수)까지 구현했다.
 
-| 기능 | 상태 |
-|---|---|
-| 환경변수 검증 | 완료 |
-| Discord REST 클라이언트 (429/5xx 재시도) | 완료 |
-| `GET /health` | 완료 |
-| `configRepository.get()` (설정 고정 메시지 읽기) | 완료 |
-| 제보 입력 검증 | 완료 |
-| 제보 작성 + Discord 사진 첨부 | 완료 |
-| 승인 제보 목록/상세 조회 | 완료 |
-| Discord OAuth 로그인, 관리자 판정 | 미구현 (3단계) |
-| 계정 인증, 투표 | 미구현 (4~5단계) |
+| 기능                                             | 상태             |
+| ------------------------------------------------ | ---------------- |
+| 환경변수 검증                                    | 완료             |
+| Discord REST 클라이언트 (429/5xx 재시도)         | 완료             |
+| `GET /health`                                    | 완료             |
+| `configRepository.get()` (설정 고정 메시지 읽기) | 완료             |
+| 제보 입력 검증                                   | 완료             |
+| 제보 작성 + Discord 사진 첨부                    | 완료             |
+| 승인 제보 목록/상세 조회                         | 완료             |
+| Discord OAuth 로그인·로그아웃·세션               | 완료             |
+| Discord 역할 기반 관리자 판정                    | 완료             |
+| 제보 승인·반려·감사 로그                         | 완료             |
+| 게임 계정 인증, 투표                             | 미구현 (4~5단계) |
 
 현재 `POST /api/reports`는 `wr-reports-pending` 채널에 제보 메시지와 사진을
-저장한다. 관리자 승인/반려는 아직 구현하지 않았다.
+저장한다. 관리자는 Discord 역할로 권한을 확인한 뒤 승인·반려할 수 있다.
 
 ## 필요한 것
 
@@ -57,7 +59,7 @@ npm 의존성은 **하나도 없다.** Node에 내장된 `http`, `fetch`, `node:
 2단계 이후에는 다음 권한을 추가로 켠다: Send Messages, Embed Links, Attach Files,
 Manage Messages, Create Public Threads, Send Messages in Threads.
 
-### OAuth 리디렉션 주소 (3단계에서 사용)
+### OAuth 리디렉션 주소
 
 **OAuth2 → Redirects**에 아래 주소를 등록한다.
 
@@ -73,17 +75,17 @@ Discord 설정에서 **고급 → 개발자 모드**를 켜면 채널을 우클�
 
 계획서 3절의 채널을 만든다. 전부 **관리자만 볼 수 있는 비공개 채널**이어야 한다.
 
-| 채널 | 환경변수 | 필요 단계 |
-|---|---|---|
-| `wr-config` | `DISCORD_CONFIG_CHANNEL_ID` | 1 |
-| `wr-reports-pending` | `DISCORD_REPORTS_PENDING_CHANNEL_ID` | 2 |
-| `wr-reports-approved` | `DISCORD_REPORTS_APPROVED_CHANNEL_ID` | 2 |
-| `wr-reports-rejected` | `DISCORD_REPORTS_REJECTED_CHANNEL_ID` | 3 |
-| `wr-audit-log` | `DISCORD_AUDIT_LOG_CHANNEL_ID` | 3 |
-| `wr-users` | `DISCORD_USERS_CHANNEL_ID` | 4 |
-| `wr-verifications` | `DISCORD_VERIFICATIONS_CHANNEL_ID` | 4 |
-| `wr-votes` | `DISCORD_VOTES_CHANNEL_ID` | 5 |
-| `wr-errors` | `DISCORD_ERRORS_CHANNEL_ID` | 6 |
+| 채널                  | 환경변수                              | 필요 단계 |
+| --------------------- | ------------------------------------- | --------- |
+| `wr-config`           | `DISCORD_CONFIG_CHANNEL_ID`           | 1         |
+| `wr-reports-pending`  | `DISCORD_REPORTS_PENDING_CHANNEL_ID`  | 2         |
+| `wr-reports-approved` | `DISCORD_REPORTS_APPROVED_CHANNEL_ID` | 2         |
+| `wr-reports-rejected` | `DISCORD_REPORTS_REJECTED_CHANNEL_ID` | 3         |
+| `wr-audit-log`        | `DISCORD_AUDIT_LOG_CHANNEL_ID`        | 3         |
+| `wr-users`            | `DISCORD_USERS_CHANNEL_ID`            | 4         |
+| `wr-verifications`    | `DISCORD_VERIFICATIONS_CHANNEL_ID`    | 4         |
+| `wr-votes`            | `DISCORD_VOTES_CHANNEL_ID`            | 5         |
+| `wr-errors`           | `DISCORD_ERRORS_CHANNEL_ID`           | 6         |
 
 **제보 API까지 사용하려면** `wr-config`, `wr-reports-pending`,
 `wr-reports-approved` 세 채널이 필요하다. 나머지는 비워둬도 서버가 뜨고,
@@ -119,7 +121,7 @@ Discord 설정에서 **고급 → 개발자 모드**를 켜면 채널을 우클�
 보낸 뒤 그 메시지를 **고정(pin)** 하고, 우클릭 → **메시지 ID 복사**로 얻은 값을
 `DISCORD_CONFIG_MESSAGE_ID`에 넣는다.
 
-메시지 앞뒤에 설명을 적어도 된다. Bridge는 ```` ```json ```` 블록만 읽는다.
+메시지 앞뒤에 설명을 적어도 된다. Bridge는 ` ```json ` 블록만 읽는다.
 
 ### 설정 값이 잘못되면
 
@@ -158,6 +160,22 @@ PUBLIC_SITE_ORIGIN=https://runnerkiller.github.io
 `DEV_REPORTER_DISCORD_ID`는 Discord OAuth가 완성되기 전까지만 사용하는 개발용 제출자다.
 Discord 개발자 모드에서 본인 계정을 길게 누르거나 우클릭해 **사용자 ID 복사**로 얻는다.
 공개 운영 전에 3단계 OAuth 로그인으로 반드시 교체한다.
+
+OAuth와 관리자 기능을 사용하려면 아래 값도 채운다.
+
+```dotenv
+BRIDGE_PUBLIC_URL=https://bridge.example.com
+DISCORD_CLIENT_ID=...
+DISCORD_CLIENT_SECRET=...
+DISCORD_ADMIN_ROLE_ID=...
+DISCORD_REPORTS_REJECTED_CHANNEL_ID=...
+DISCORD_AUDIT_LOG_CHANNEL_ID=...
+SESSION_SIGNING_SECRET=32자_이상의_임의_문자열
+```
+
+`DISCORD_ADMIN_ROLE_ID`는 관리자에게만 부여한 Discord 역할의 ID다. 관리자 역할 조회가
+거부되면 Discord Developer Portal의 Bot 설정에서 Server Members Intent를 켰는지와
+봇의 서버/채널 권한을 확인한다.
 
 ## 5. 실행
 
@@ -199,20 +217,20 @@ curl http://localhost:8787/health
 }
 ```
 
-| status | HTTP | 뜻 |
-|---|---|---|
-| `ok` | 200 | Discord 연결과 설정 읽기 모두 정상 |
-| `degraded` | 200 | 동작하지만 설정에 경고가 있거나 값이 오래됨 |
-| `error` | 503 | Discord에 못 붙거나 설정을 읽지 못함 |
+| status     | HTTP | 뜻                                          |
+| ---------- | ---- | ------------------------------------------- |
+| `ok`       | 200  | Discord 연결과 설정 읽기 모두 정상          |
+| `degraded` | 200  | 동작하지만 설정에 경고가 있거나 값이 오래됨 |
+| `error`    | 503  | Discord에 못 붙거나 설정을 읽지 못함        |
 
 ### 자주 나오는 오류
 
-| 증상 | 원인 |
-|---|---|
-| `401: Unauthorized` | 봇 토큰이 틀렸거나 재발급 후 `.env`를 안 고침 |
-| `Missing Access` | 봇을 서버에 초대하지 않았거나 채널 권한이 없음 |
-| `Unknown Message` | `DISCORD_CONFIG_MESSAGE_ID`가 틀림 |
-| `설정 메시지에서 JSON을 찾지 못했습니다` | 고정 메시지에 ```` ```json ```` 블록이 없음 |
+| 증상                                     | 원인                                           |
+| ---------------------------------------- | ---------------------------------------------- |
+| `401: Unauthorized`                      | 봇 토큰이 틀렸거나 재발급 후 `.env`를 안 고침  |
+| `Missing Access`                         | 봇을 서버에 초대하지 않았거나 채널 권한이 없음 |
+| `Unknown Message`                        | `DISCORD_CONFIG_MESSAGE_ID`가 틀림             |
+| `설정 메시지에서 JSON을 찾지 못했습니다` | 고정 메시지에 ` ```json ` 블록이 없음          |
 
 ## 7. 테스트
 
@@ -266,7 +284,50 @@ Content-Type: application/json
 - 개인정보 의심 내용은 Bridge에서 다시 차단한다.
 - 저장된 Discord 메시지 ID가 `reportId`다.
 - 내부 `reporterDiscordId`는 공개 API 응답에서 제거한다.
-- 현재 로그인 전 개발 단계이므로 제출자는 `.env`의 `DEV_REPORTER_DISCORD_ID`로 기록된다.
+- OAuth를 일부러 끈 개발 모드에서는 제출자를 `.env`의 `DEV_REPORTER_DISCORD_ID`로 기록할 수 있다.
+
+`authentication` 기능 설정이 켜져 있으면 `DEV_REPORTER_DISCORD_ID` 대신 로그인 세션의
+Discord 사용자 ID를 사용한다. 브라우저 요청에는 `credentials: "include"`가 필요하다.
+
+## 9. Discord 로그인 API
+
+```text
+GET  /api/auth/discord?returnTo=/wildrift-report/
+GET  /api/auth/discord/callback
+GET  /api/me
+POST /api/auth/logout
+```
+
+- 로그인 시작 시 변조 방지 state 쿠키를 만들고 Discord OAuth 화면으로 이동한다.
+- 콜백에서 OAuth 코드를 교환하고 Discord 사용자 ID를 확인한다.
+- 세션은 별도 DB에 저장하지 않는 HMAC 서명 쿠키다.
+- 세션 쿠키는 `HttpOnly; Secure; SameSite=None`이며 기본 유효기간은 8시간이다.
+- OAuth access token은 사용자 확인 후 버리고 Discord 메시지에 저장하지 않는다.
+- `returnTo`는 사이트 내부 경로만 허용해 외부 사이트 리디렉션을 막는다.
+
+## 10. 관리자 제보 API
+
+```text
+GET   /api/admin/reports?status=pending
+PATCH /api/admin/reports/{PENDING_REPORT_ID}/status
+```
+
+판정 요청 본문:
+
+```json
+{ "status": "approved" }
+```
+
+또는 `rejected`를 사용한다. 처리 순서는 다음과 같다.
+
+1. 대기 채널 원본 메시지와 첨부파일을 읽는다.
+2. 승인 또는 반려 채널에 상태가 갱신된 새 메시지와 사진을 복제한다.
+3. `wr-audit-log`에 관리자 ID와 변경 전후 상태를 기록한다.
+4. 위 과정이 성공한 뒤 대기 채널 원본을 삭제한다.
+5. 마지막 삭제만 실패하면 데이터 손실을 피하기 위해 성공 결과와 `cleanupPending: true`를 반환한다.
+
+같은 판정 요청이 재시도되면 대상 채널의 최근 레코드에서 `originReportId`를 찾아 기존 결과를
+재사용한다. 네트워크 오류 뒤 같은 제보가 중복 생성되는 가능성을 줄이기 위한 처리다.
 
 ## 보안 규칙
 
@@ -279,5 +340,5 @@ Content-Type: application/json
 
 ## 다음 단계
 
-계획서 13절 3단계(Discord OAuth와 관리자 검수)부터 이어서 구현한다.
+계획서 13절 4단계(게임 계정 인증과 사용자 정지)부터 이어서 구현한다.
 Termux 상시 실행과 자동 재시작 방법은 6단계에서 문서로 정리한다.

@@ -58,11 +58,13 @@ export function createDiscordClient({
   sleep = defaultSleep,
   maxRetries = 3,
   timeoutMs = 10_000,
-  userAgent = "WildriftReportBridge (https://github.com/runnerkiller/runnerkiller, 0.2.0)",
+  userAgent = "WildriftReportBridge (https://github.com/runnerkiller/runnerkiller, 0.3.0)",
 } = {}) {
   if (!token) throw new Error("Discord 봇 토큰이 필요합니다.");
   if (typeof fetchImpl !== "function") {
-    throw new Error("fetch를 사용할 수 없습니다. Node.js 20 이상이 필요합니다.");
+    throw new Error(
+      "fetch를 사용할 수 없습니다. Node.js 20 이상이 필요합니다.",
+    );
   }
 
   async function request(method, path, options = {}) {
@@ -78,9 +80,12 @@ export function createDiscordClient({
       "User-Agent": userAgent,
       Accept: "application/json",
     };
-    if (options.body !== undefined) headers["Content-Type"] = "application/json";
+    if (options.body !== undefined)
+      headers["Content-Type"] = "application/json";
     if (options.body !== undefined && options.formData !== undefined) {
-      throw new Error("JSON body와 multipart formData를 동시에 보낼 수 없습니다.");
+      throw new Error(
+        "JSON body와 multipart formData를 동시에 보낼 수 없습니다.",
+      );
     }
 
     let lastError = null;
@@ -159,10 +164,13 @@ export function createDiscordClient({
       );
     }
 
-    throw lastError ?? new DiscordApiError("Discord 요청에 실패했습니다.", {
-      method,
-      path,
-    });
+    throw (
+      lastError ??
+      new DiscordApiError("Discord 요청에 실패했습니다.", {
+        method,
+        path,
+      })
+    );
   }
 
   return {
@@ -170,6 +178,8 @@ export function createDiscordClient({
     /** 봇 토큰이 유효한지 확인하는 가장 가벼운 요청 */
     getCurrentUser: () => request("GET", "/users/@me"),
     getGuild: (guildId) => request("GET", `/guilds/${guildId}`),
+    getGuildMember: (guildId, userId) =>
+      request("GET", `/guilds/${guildId}/members/${userId}`),
     getChannel: (channelId) => request("GET", `/channels/${channelId}`),
     getMessage: (channelId, messageId) =>
       request("GET", `/channels/${channelId}/messages/${messageId}`),
@@ -204,5 +214,7 @@ export function createDiscordClient({
       request("PATCH", `/channels/${channelId}/messages/${messageId}`, {
         body: payload,
       }),
+    deleteMessage: (channelId, messageId) =>
+      request("DELETE", `/channels/${channelId}/messages/${messageId}`),
   };
 }
