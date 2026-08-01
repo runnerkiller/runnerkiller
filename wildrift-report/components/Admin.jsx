@@ -340,6 +340,127 @@
     );
   }
 
+  function AdminDebugTools({
+    reports,
+    accounts,
+    onSeedDemoData,
+    onRemoveDemoData,
+    onResetFeatureFlags,
+    onResetAllLocalData,
+  }) {
+    const [busy, setBusy] = useState("");
+    const [message, setMessage] = useState("");
+    const demoReportCount = reports.filter((r) =>
+      r.id.startsWith("demo-report-"),
+    ).length;
+    const demoAccountCount = Object.keys(accounts).filter((id) =>
+      id.startsWith("demo_"),
+    ).length;
+
+    const run = async (name, action) => {
+      setBusy(name);
+      setMessage("");
+      try {
+        await action();
+        setMessage(`${name} 완료`);
+      } catch (error) {
+        setMessage(error?.message || `${name} 실패`);
+      } finally {
+        setBusy("");
+      }
+    };
+
+    return (
+      <div className="mt-4 space-y-3">
+        <div
+          className="rounded p-3 text-xs leading-relaxed"
+          style={{
+            backgroundColor: `${C.hack}14`,
+            border: `1px solid ${C.hack}44`,
+            color: C.muted,
+          }}
+        >
+          현재 샘플 제보 {demoReportCount}건 · 샘플 계정 {demoAccountCount}개
+          <br />
+          인증 계정: <span className="font-mono">demo_approved</span>
+          <br />
+          비밀번호: <span className="font-mono">demo1234</span>
+        </div>
+
+        <button
+          disabled={!!busy}
+          onClick={() => run("샘플 데이터 생성", onSeedDemoData)}
+          className="w-full rounded py-3 text-sm font-bold disabled:opacity-40"
+          style={{ backgroundColor: C.abuse, color: C.bg }}
+        >
+          {busy === "샘플 데이터 생성" ? "처리 중…" : "샘플 데이터 생성"}
+        </button>
+
+        <button
+          disabled={!!busy || (!demoReportCount && !demoAccountCount)}
+          onClick={() => {
+            if (window.confirm("샘플 데이터만 삭제할까요?"))
+              run("샘플 데이터 삭제", onRemoveDemoData);
+          }}
+          className="w-full rounded py-3 text-sm font-bold disabled:opacity-40"
+          style={{
+            backgroundColor: "transparent",
+            color: C.muted,
+            border: `1px solid ${C.line}`,
+          }}
+        >
+          샘플 데이터만 삭제
+        </button>
+
+        <button
+          disabled={!!busy}
+          onClick={() => {
+            if (window.confirm("모든 기능 스위치를 기본값으로 돌릴까요?"))
+              run("기능 설정 초기화", onResetFeatureFlags);
+          }}
+          className="w-full rounded py-3 text-sm font-bold disabled:opacity-40"
+          style={{
+            backgroundColor: "transparent",
+            color: C.gold,
+            border: `1px solid ${C.gold}`,
+          }}
+        >
+          기능 설정 기본값으로 초기화
+        </button>
+
+        <div
+          className="rounded p-3"
+          style={{ border: `1px solid ${C.danger}66` }}
+        >
+          <p className="text-xs leading-relaxed" style={{ color: C.danger }}>
+            아래 버튼은 제보, 계정, 평가, 사진, 기능 설정을 모두 삭제합니다.
+            복구할 수 없습니다.
+          </p>
+          <button
+            disabled={!!busy}
+            onClick={() => {
+              const answer = window.prompt(
+                '전체 데이터를 삭제하려면 "초기화"를 입력하세요.',
+              );
+              if (answer === "초기화")
+                run("전체 로컬 데이터 초기화", onResetAllLocalData);
+            }}
+            className="mt-3 w-full rounded py-3 text-sm font-bold disabled:opacity-40"
+            style={{ backgroundColor: C.danger, color: "#fff" }}
+          >
+            전체 로컬 데이터 초기화
+          </button>
+        </div>
+
+        {message && (
+          <p className="text-center text-xs" style={{ color: C.abuse }}>
+            {message}
+          </p>
+        )}
+      </div>
+    );
+  }
+
   function AdminPanel({
     reports,
     accounts,
@@ -351,6 +472,10 @@
     onDeleteAccount,
     onResetVotes,
     onDecideVerify,
+    onSeedDemoData,
+    onRemoveDemoData,
+    onResetFeatureFlags,
+    onResetAllLocalData,
   }) {
     const [pass, setPass] = useState("");
     const [ok, setOk] = useState(false);
@@ -421,6 +546,7 @@
       { id: "verify", label: `계정 인증 ${verifyPendingCount}` },
       { id: "users", label: `유저 ${Object.keys(accounts).length}` },
       { id: "features", label: "기능 설정" },
+      { id: "debug", label: "테스트 도구" },
     ];
 
     return (
@@ -499,7 +625,7 @@
           ))}
         </div>
 
-        {!["users", "verify", "features"].includes(sub) && (
+        {!["users", "verify", "features", "debug"].includes(sub) && (
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -513,7 +639,16 @@
           />
         )}
 
-        {sub === "features" ? (
+        {sub === "debug" ? (
+          <AdminDebugTools
+            reports={reports}
+            accounts={accounts}
+            onSeedDemoData={onSeedDemoData}
+            onRemoveDemoData={onRemoveDemoData}
+            onResetFeatureFlags={onResetFeatureFlags}
+            onResetAllLocalData={onResetAllLocalData}
+          />
+        ) : sub === "features" ? (
           <AdminFeatureFlags
             featureFlags={featureFlags}
             onChange={onFeatureFlagChange}
@@ -550,5 +685,6 @@
   window.VerifyCard = VerifyCard;
   window.AdminUsers = AdminUsers;
   window.AdminFeatureFlags = AdminFeatureFlags;
+  window.AdminDebugTools = AdminDebugTools;
   window.AdminPanel = AdminPanel;
 })();
