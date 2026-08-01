@@ -39,5 +39,21 @@ window.WR = window.WR || {};
         /* 이미 없을 수 있음 */
       }
     },
+
+    async clearPrefix(prefix) {
+      [...memStore.keys()]
+        .filter((key) => key.startsWith(prefix))
+        .forEach((key) => memStore.delete(key));
+      try {
+        const targets = [];
+        for (let i = 0; i < window.localStorage.length; i += 1) {
+          const key = window.localStorage.key(i);
+          if (key && key.startsWith(prefix)) targets.push(key);
+        }
+        targets.forEach((key) => window.localStorage.removeItem(key));
+      } catch {
+        /* localStorage를 사용할 수 없는 환경 */
+      }
+    },
   };
 })();
