@@ -60,6 +60,10 @@
       setAccounts(next);
       await store.set(ACCOUNTS_KEY, JSON.stringify(next), true);
     };
+    const persistVotes = async (next) => {
+      setVotes(next);
+      await store.set(VOTES_KEY, JSON.stringify(next), true);
+    };
     const changeFeatureFlag = async (key, value) => {
       const next = { ...featureFlags, [key]: value };
       if (key === "evidenceUpload" && !value) next.evidenceRequired = false;
@@ -95,6 +99,121 @@
     };
     const decideVerify = (id, status) =>
       persistAccounts({ ...accounts, [id]: { ...accounts[id], status } });
+
+    const seedDemoData = async () => {
+      const createdAt = new Date().toISOString();
+      const occurredAt = createdAt.slice(0, 10);
+      const demoReports = [
+        {
+          id: "demo-report-approved",
+          nickname: "DEMO_맵핵의심",
+          category: "hack",
+          tags: [],
+          mode: "랭크",
+          occurredAt,
+          description:
+            "테스트용 공개 제보입니다. 맵핵 의심 상황을 가정한 샘플 데이터입니다.",
+          hasEvidence: false,
+          reporterNickname: "DEMO_신고자",
+          status: "approved",
+          createdAt,
+        },
+        {
+          id: "demo-report-pending",
+          nickname: "DEMO_어뷰징의심",
+          category: "abuse",
+          tags: ["대리", "부계정"],
+          mode: "전설 랭크",
+          occurredAt,
+          description:
+            "관리자 검수 대기 화면을 확인하기 위한 어뷰징 의심 샘플 제보입니다.",
+          hasEvidence: false,
+          reporterNickname: null,
+          status: "pending",
+          createdAt,
+        },
+        {
+          id: "demo-report-rejected",
+          nickname: "DEMO_고의트롤",
+          category: "troll",
+          tags: ["고의 피딩", "잠수 / AFK"],
+          mode: "랭크",
+          occurredAt,
+          description:
+            "반려된 제보 목록과 필터를 확인하기 위한 테스트 샘플 데이터입니다.",
+          hasEvidence: false,
+          reporterNickname: null,
+          status: "rejected",
+          createdAt,
+        },
+      ];
+      const keptReports = reports.filter(
+        (r) => !r.id.startsWith("demo-report-"),
+      );
+      const demoPasswordHash = await hashPass("demo1234");
+      const nextAccounts = {
+        ...accounts,
+        demo_approved: {
+          passHash: demoPasswordHash,
+          gameNickname: "DEMO_인증사용자",
+          status: "approved",
+          banned: false,
+          voted: [],
+        },
+        demo_pending: {
+          passHash: demoPasswordHash,
+          gameNickname: "DEMO_인증대기",
+          status: "pending",
+          banned: false,
+          voted: [],
+        },
+      };
+      const nextVotes = {
+        ...votes,
+        "demo-report-approved": { up: 3, down: 1 },
+        "demo-report-pending": { up: 0, down: 0 },
+        "demo-report-rejected": { up: 0, down: 2 },
+      };
+      await persistReports([...demoReports, ...keptReports]);
+      await persistAccounts(nextAccounts);
+      await persistVotes(nextVotes);
+    };
+
+    const removeDemoData = async () => {
+      const nextReports = reports.filter(
+        (r) => !r.id.startsWith("demo-report-"),
+      );
+      const nextAccounts = Object.fromEntries(
+        Object.entries(accounts).filter(([id]) => !id.startsWith("demo_")),
+      );
+      const nextVotes = Object.fromEntries(
+        Object.entries(votes).filter(([id]) => !id.startsWith("demo-report-")),
+      );
+      await persistReports(nextReports);
+      await persistAccounts(nextAccounts);
+      await persistVotes(nextVotes);
+      if (session?.startsWith("demo_")) await logout();
+    };
+
+    const resetFeatureFlags = async () => {
+      const next = { ...DEFAULT_FEATURE_FLAGS };
+      setFeatureFlags(next);
+      await store.set(FEATURE_FLAGS_KEY, JSON.stringify(next), true);
+      setTab("admin");
+    };
+
+    const resetAllLocalData = async () => {
+      await store.clearPrefix("wr-");
+      setReports([]);
+      setVotes({});
+      setAccounts({});
+      setSession(null);
+      setFeatureFlags({ ...DEFAULT_FEATURE_FLAGS });
+      setQuery("");
+      setFilter("all");
+      setOpen(null);
+      setTab("admin");
+    };
 
     const login = async (userId, pass, mode, gameNickname, verifyShot) => {
       if (!featureFlags.authentication)
@@ -422,6 +541,10 @@
               onDeleteAccount={deleteAccount}
               onResetVotes={resetVotes}
               onDecideVerify={decideVerify}
+              onSeedDemoData={seedDemoData}
+              onRemoveDemoData={removeDemoData}
+              onResetFeatureFlags={resetFeatureFlags}
+              onResetAllLocalData={resetAllLocalData}
             />
           )}
 
