@@ -136,12 +136,6 @@
     return <Chip color={color}>{label}</Chip>;
   }
 
-  const STATUS_LABEL = {
-    pending: "검수 대기",
-    approved: "공개됨",
-    rejected: "반려됨",
-  };
-
   function AuthBar({ session, account, onLogout }) {
     return (
       <div
