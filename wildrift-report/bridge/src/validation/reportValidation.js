@@ -1,4 +1,4 @@
-const NICK_RE = /^[가-힣ㄱ-ㅎa-zA-Z0-9 _.\-]{2,20}$/;
+export const NICK_RE = /^[가-힣ㄱ-ㅎa-zA-Z0-9 _.\-]{2,20}$/;
 
 export const REPORT_CATEGORIES = Object.freeze({
   hack: [],
@@ -27,7 +27,8 @@ const PII_RULES = [
   },
 ];
 
-const DATA_URL_RE = /^data:(image\/(?:jpeg|png|webp));base64,([a-zA-Z0-9+/=\s]+)$/;
+const DATA_URL_RE =
+  /^data:(image\/(?:jpeg|png|webp));base64,([a-zA-Z0-9+/=\s]+)$/;
 const EXTENSIONS = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -36,12 +37,19 @@ const EXTENSIONS = {
 
 function hasExpectedSignature(data, contentType) {
   if (contentType === "image/jpeg") {
-    return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+    return (
+      data.length >= 3 &&
+      data[0] === 0xff &&
+      data[1] === 0xd8 &&
+      data[2] === 0xff
+    );
   }
   if (contentType === "image/png") {
     return (
       data.length >= 8 &&
-      data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      data
+        .subarray(0, 8)
+        .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
     );
   }
   if (contentType === "image/webp") {
@@ -104,7 +112,9 @@ export function decodeEvidenceDataUrl(value, index) {
     throw new Error(`${index + 1}번째 증거 사진은 5MB 이하여야 합니다.`);
   }
   if (!hasExpectedSignature(data, contentType)) {
-    throw new Error(`${index + 1}번째 증거 사진의 실제 파일 형식이 일치하지 않습니다.`);
+    throw new Error(
+      `${index + 1}번째 증거 사진의 실제 파일 형식이 일치하지 않습니다.`,
+    );
   }
 
   return {
@@ -117,7 +127,8 @@ export function decodeEvidenceDataUrl(value, index) {
 
 export function validateReportSubmission(body, options = {}) {
   const issues = [];
-  const input = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const input =
+    body && typeof body === "object" && !Array.isArray(body) ? body : {};
   const nickname = String(input.nickname ?? "").trim();
   const category = String(input.category ?? "");
   const mode = String(input.mode ?? "");
@@ -128,7 +139,9 @@ export function validateReportSubmission(body, options = {}) {
   const tags = Array.isArray(input.tags)
     ? [...new Set(input.tags.map((tag) => String(tag)).filter(Boolean))]
     : [];
-  const today = new Date(options.now?.() ?? Date.now()).toISOString().slice(0, 10);
+  const today = new Date(options.now?.() ?? Date.now())
+    .toISOString()
+    .slice(0, 10);
   const flags = {
     evidenceUpload: true,
     evidenceRequired: false,
@@ -136,20 +149,32 @@ export function validateReportSubmission(body, options = {}) {
   };
 
   if (!NICK_RE.test(nickname)) {
-    issues.push({ field: "nickname", message: "닉네임은 2~20자로 입력해 주세요." });
+    issues.push({
+      field: "nickname",
+      message: "닉네임은 2~20자로 입력해 주세요.",
+    });
   }
   if (!Object.hasOwn(REPORT_CATEGORIES, category)) {
-    issues.push({ field: "category", message: "지원하지 않는 제보 분류입니다." });
+    issues.push({
+      field: "category",
+      message: "지원하지 않는 제보 분류입니다.",
+    });
   }
   const invalidTags = tags.filter((tag) => !allowedTags.includes(tag));
   if (invalidTags.length > 0) {
-    issues.push({ field: "tags", message: `허용되지 않은 태그: ${invalidTags.join(", ")}` });
+    issues.push({
+      field: "tags",
+      message: `허용되지 않은 태그: ${invalidTags.join(", ")}`,
+    });
   }
   if (!REPORT_MODES.includes(mode)) {
     issues.push({ field: "mode", message: "지원하지 않는 게임 모드입니다." });
   }
   if (!isValidDateOnly(occurredAt, today)) {
-    issues.push({ field: "occurredAt", message: "발생 날짜가 올바르지 않거나 미래입니다." });
+    issues.push({
+      field: "occurredAt",
+      message: "발생 날짜가 올바르지 않거나 미래입니다.",
+    });
   }
   if (description.length < 15 || description.length > MAX_DESCRIPTION_LENGTH) {
     issues.push({
@@ -158,20 +183,35 @@ export function validateReportSubmission(body, options = {}) {
     });
   }
   if (description.includes("```")) {
-    issues.push({ field: "description", message: "상황 설명에 연속된 백틱 3개를 사용할 수 없습니다." });
+    issues.push({
+      field: "description",
+      message: "상황 설명에 연속된 백틱 3개를 사용할 수 없습니다.",
+    });
   }
   const pii = scanPii(description);
   if (pii.length > 0) {
-    issues.push({ field: "description", message: `개인정보 의심 항목: ${pii.join(", ")}` });
+    issues.push({
+      field: "description",
+      message: `개인정보 의심 항목: ${pii.join(", ")}`,
+    });
   }
   if (!flags.evidenceUpload && evidence.length > 0) {
-    issues.push({ field: "evidence", message: "현재 증거 사진 첨부 기능이 꺼져 있습니다." });
+    issues.push({
+      field: "evidence",
+      message: "현재 증거 사진 첨부 기능이 꺼져 있습니다.",
+    });
   }
   if (flags.evidenceRequired && evidence.length === 0) {
-    issues.push({ field: "evidence", message: "증거 사진을 한 장 이상 첨부해 주세요." });
+    issues.push({
+      field: "evidence",
+      message: "증거 사진을 한 장 이상 첨부해 주세요.",
+    });
   }
   if (evidence.length > MAX_EVIDENCE_FILES) {
-    issues.push({ field: "evidence", message: "증거 사진은 최대 3장까지 첨부할 수 있습니다." });
+    issues.push({
+      field: "evidence",
+      message: "증거 사진은 최대 3장까지 첨부할 수 있습니다.",
+    });
   }
 
   const evidenceFiles = [];

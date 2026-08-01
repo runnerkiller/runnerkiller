@@ -9,21 +9,23 @@
 
 ## 지금 구현된 범위
 
-계획서 13절의 3단계(Discord OAuth와 관리자 검수)까지 구현했다.
+계획서 13절의 4단계 백엔드(게임 계정 인증과 사용자 정지)까지 구현했다.
 
-| 기능                                             | 상태             |
-| ------------------------------------------------ | ---------------- |
-| 환경변수 검증                                    | 완료             |
-| Discord REST 클라이언트 (429/5xx 재시도)         | 완료             |
-| `GET /health`                                    | 완료             |
-| `configRepository.get()` (설정 고정 메시지 읽기) | 완료             |
-| 제보 입력 검증                                   | 완료             |
-| 제보 작성 + Discord 사진 첨부                    | 완료             |
-| 승인 제보 목록/상세 조회                         | 완료             |
-| Discord OAuth 로그인·로그아웃·세션               | 완료             |
-| Discord 역할 기반 관리자 판정                    | 완료             |
-| 제보 승인·반려·감사 로그                         | 완료             |
-| 게임 계정 인증, 투표                             | 미구현 (4~5단계) |
+| 기능                                             | 상태           |
+| ------------------------------------------------ | -------------- |
+| 환경변수 검증                                    | 완료           |
+| Discord REST 클라이언트 (429/5xx 재시도)         | 완료           |
+| `GET /health`                                    | 완료           |
+| `configRepository.get()` (설정 고정 메시지 읽기) | 완료           |
+| 제보 입력 검증                                   | 완료           |
+| 제보 작성 + Discord 사진 첨부                    | 완료           |
+| 승인 제보 목록/상세 조회                         | 완료           |
+| Discord OAuth 로그인·로그아웃·세션               | 완료           |
+| Discord 역할 기반 관리자 판정                    | 완료           |
+| 제보 승인·반려·감사 로그                         | 완료           |
+| 게임 계정 인증 제출·승인·거절                    | 완료           |
+| 사용자 조회·정지·해제                            | 완료           |
+| 투표 저장소와 신뢰도 집계                        | 미구현 (5단계) |
 
 현재 `POST /api/reports`는 `wr-reports-pending` 채널에 제보 메시지와 사진을
 저장한다. 관리자는 Discord 역할로 권한을 확인한 뒤 승인·반려할 수 있다.
@@ -88,7 +90,8 @@ Discord 설정에서 **고급 → 개발자 모드**를 켜면 채널을 우클�
 | `wr-errors`           | `DISCORD_ERRORS_CHANNEL_ID`           | 6         |
 
 **제보 API까지 사용하려면** `wr-config`, `wr-reports-pending`,
-`wr-reports-approved` 세 채널이 필요하다. 나머지는 비워둬도 서버가 뜨고,
+`wr-reports-approved`가 필요하다. **게임 계정 인증까지 사용하려면** `wr-users`,
+`wr-verifications`, `wr-audit-log`도 필요하다. 나머지는 비워둬도 서버가 뜨고,
 `/health`가 어느 단계에 무엇이 빠졌는지 알려준다.
 
 서버 이름을 우클릭해 **ID 복사**하면 `DISCORD_GUILD_ID`다.
@@ -170,6 +173,8 @@ DISCORD_CLIENT_SECRET=...
 DISCORD_ADMIN_ROLE_ID=...
 DISCORD_REPORTS_REJECTED_CHANNEL_ID=...
 DISCORD_AUDIT_LOG_CHANNEL_ID=...
+DISCORD_USERS_CHANNEL_ID=...
+DISCORD_VERIFICATIONS_CHANNEL_ID=...
 SESSION_SIGNING_SECRET=32자_이상의_임의_문자열
 ```
 
@@ -197,7 +202,7 @@ curl http://localhost:8787/health
 ```json
 {
   "status": "ok",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "checkedAt": "2026-08-01T12:00:00.000Z",
   "uptimeSeconds": 12,
   "discord": {
@@ -329,6 +334,43 @@ PATCH /api/admin/reports/{PENDING_REPORT_ID}/status
 같은 판정 요청이 재시도되면 대상 채널의 최근 레코드에서 `originReportId`를 찾아 기존 결과를
 재사용한다. 네트워크 오류 뒤 같은 제보가 중복 생성되는 가능성을 줄이기 위한 처리다.
 
+## 11. 게임 계정 인증 API
+
+로그인한 사용자는 다음 API로 게임 닉네임과 프로필 사진 한 장을 제출한다.
+
+```http
+POST /api/verifications
+Content-Type: application/json
+```
+
+```json
+{
+  "gameNickname": "협곡의파괴자",
+  "evidence": "data:image/jpeg;base64,..."
+}
+```
+
+- JPEG, PNG, WebP만 허용하며 최대 5MB다.
+- 인증 사진은 `wr-verifications`, 사용자 상태는 `wr-users`에 저장된다.
+- 같은 사용자의 대기 요청이 이미 있으면 기존 요청을 재사용한다.
+- 승인된 사용자와 정지된 사용자는 새 인증을 요청할 수 없다.
+- `GET /api/me`의 `user.gameAccount`에서 닉네임, 인증 상태, 정지 상태를 확인한다.
+- 본인용 응답에는 내부 Discord 사용자 ID와 인증 사진 URL을 넣지 않는다.
+
+## 12. 관리자 인증·사용자 API
+
+```text
+GET   /api/admin/verifications?status=pending
+PATCH /api/admin/verifications/{VERIFICATION_ID}/status
+GET   /api/admin/users
+PATCH /api/admin/users/{DISCORD_USER_ID}/ban
+```
+
+인증 판정 본문은 `{ "status": "approved" }` 또는 `rejected`, 정지 변경 본문은
+`{ "banned": true }` 또는 `false`다. 인증 판정과 정지·해제는 모두 `wr-audit-log`에
+기록된다. 인증 판정 도중 일부 단계가 실패하면 같은 요청을 재시도해 사용자 상태와 감사 로그를
+복구할 수 있다.
+
 ## 보안 규칙
 
 계획서 1절의 원칙을 그대로 따른다.
@@ -340,5 +382,7 @@ PATCH /api/admin/reports/{PENDING_REPORT_ID}/status
 
 ## 다음 단계
 
-계획서 13절 4단계(게임 계정 인증과 사용자 정지)부터 이어서 구현한다.
+계획서 13절 5단계(`voteRepository`, 중복 투표 방지, 신뢰도 집계)부터 이어서 구현한다.
+프런트엔드의 자체 아이디/비밀번호와 하드코딩 관리자 화면은 Bridge API 연결 단계에서
+Discord 로그인 화면으로 교체한다.
 Termux 상시 실행과 자동 재시작 방법은 6단계에서 문서로 정리한다.

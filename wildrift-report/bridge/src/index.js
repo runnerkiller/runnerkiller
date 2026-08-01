@@ -8,6 +8,8 @@ import { createAuthService } from "./auth/authService.js";
 import { createAuditRepository } from "./repositories/auditRepository.js";
 import { createConfigRepository } from "./repositories/configRepository.js";
 import { createReportRepository } from "./repositories/reportRepository.js";
+import { createUserRepository } from "./repositories/userRepository.js";
+import { createVerificationRepository } from "./repositories/verificationRepository.js";
 import { createHealthService } from "./health.js";
 import { createServer } from "./server.js";
 
@@ -46,6 +48,33 @@ const auditRepository = config.discord.channels.auditLog
       channelId: config.discord.channels.auditLog,
     })
   : null;
+
+const userRepository = config.discord.channels.users
+  ? createUserRepository({
+      discordClient,
+      channelId: config.discord.channels.users,
+      onInvalidRecord: (error, message) =>
+        console.warn(
+          `사용자 메시지 ${message?.id ?? "?"}를 건너뜁니다:`,
+          error.message,
+        ),
+    })
+  : null;
+
+const verificationRepository =
+  config.discord.channels.verifications && userRepository && auditRepository
+    ? createVerificationRepository({
+        discordClient,
+        channelId: config.discord.channels.verifications,
+        userRepository,
+        auditRepository,
+        onInvalidRecord: (error, message) =>
+          console.warn(
+            `인증 메시지 ${message?.id ?? "?"}를 건너뜁니다:`,
+            error.message,
+          ),
+      })
+    : null;
 
 const reportRepository =
   config.discord.channels.reportsPending &&
@@ -100,6 +129,9 @@ const server = createServer({
   healthService,
   configRepository,
   reportRepository,
+  userRepository,
+  verificationRepository,
+  auditRepository,
   authService,
   devReporterDiscordId: config.devReporterDiscordId,
   publicSiteOrigin: config.publicSiteOrigin,

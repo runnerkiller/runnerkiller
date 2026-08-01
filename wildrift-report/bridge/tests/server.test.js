@@ -15,12 +15,24 @@ let featureFlags = {
   evidenceUpload: true,
   evidenceRequired: false,
   authentication: false,
+  signup: true,
   maintenanceMode: false,
 };
 let approvedReports = [];
 let pendingReports = [];
 let createdInput = null;
 let decisionInput = null;
+let currentAccount = null;
+let users = [];
+let pendingVerifications = [];
+let createdVerificationInput = null;
+let verificationDecisionInput = null;
+let banInput = null;
+let auditInput = null;
+
+const tinyJpeg = `data:image/jpeg;base64,${Buffer.from([
+  0xff, 0xd8, 0xff, 0xdb, 0x00,
+]).toString("base64")}`;
 
 const healthService = {
   async check() {
@@ -59,6 +71,67 @@ const reportRepository = {
       report: { reportId: "999999999999999999", status },
       cleanupPending: false,
     };
+  },
+};
+
+const userRepository = {
+  async getByDiscordId(discordUserId) {
+    return currentAccount?.discordUserId === discordUserId
+      ? currentAccount
+      : null;
+  },
+  async list(options) {
+    return { users, nextCursor: null, options };
+  },
+  async setBanned(discordUserId, banned) {
+    banInput = { discordUserId, banned };
+    currentAccount = { ...currentAccount, discordUserId, banned };
+    return currentAccount;
+  },
+};
+
+const verificationRepository = {
+  async create(identity, evidenceFile) {
+    createdVerificationInput = { identity, evidenceFile };
+    return {
+      recovered: false,
+      verification: {
+        verificationId: "666666666666666666",
+        discordUserId: identity.discordUserId,
+        gameNickname: identity.gameNickname,
+        status: "pending",
+        evidence: [{ url: "https://cdn.discordapp.com/private.jpg" }],
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+    };
+  },
+  async list(options) {
+    return {
+      verifications: pendingVerifications,
+      nextCursor: null,
+      options,
+    };
+  },
+  async decide(verificationId, status, adminId) {
+    verificationDecisionInput = { verificationId, status, adminId };
+    return {
+      recovered: false,
+      verification: {
+        verificationId,
+        discordUserId: "888888888888888888",
+        gameNickname: "협곡의파괴자",
+        status,
+        evidence: [],
+      },
+    };
+  },
+};
+
+const auditRepository = {
+  async create(event) {
+    auditInput = event;
+    return event;
   },
 };
 
@@ -105,6 +178,9 @@ before(async () => {
     healthService,
     configRepository,
     reportRepository,
+    userRepository,
+    verificationRepository,
+    auditRepository,
     authService,
     devReporterDiscordId: "444444444444444444",
     publicSiteOrigin: SITE_ORIGIN,
@@ -271,6 +347,36 @@ describe("reports API", () => {
     assert.equal(createdInput.report.reporterDiscordId, "777777777777777777");
   });
 
+  test("정지된 로그인 사용자의 제보 제출을 차단한다", async () => {
+    featureFlags = { ...featureFlags, authentication: true };
+    currentAccount = {
+      discordUserId: "777777777777777777",
+      verificationStatus: "approved",
+      banned: true,
+    };
+    const response = await fetch(`${baseUrl}/api/reports`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "wr_session=valid",
+      },
+      body: JSON.stringify({
+        nickname: "협곡의파괴자",
+        category: "troll",
+        tags: ["고의 피딩"],
+        mode: "랭크",
+        occurredAt: "2026-08-01",
+        description: "한타 직전에 반복적으로 적진으로 들어가 사망했습니다.",
+        evidence: [],
+      }),
+    });
+    const body = await response.json();
+    featureFlags = { ...featureFlags, authentication: false };
+    currentAccount = null;
+    assert.equal(response.status, 403);
+    assert.equal(body.error.code, "user_banned");
+  });
+
   test("입력 오류는 필드별 422를 반환한다", async () => {
     const response = await fetch(`${baseUrl}/api/reports`, {
       method: "POST",
@@ -329,6 +435,14 @@ describe("Discord auth API", () => {
   });
 
   test("로그인 세션의 사용자와 관리자 여부를 반환한다", async () => {
+    currentAccount = {
+      discordUserId: "777777777777777777",
+      gameNickname: "협곡의파괴자",
+      verificationStatus: "approved",
+      banned: false,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    };
     const response = await fetch(`${baseUrl}/api/me`, {
       headers: { Cookie: "wr_session=valid" },
     });
@@ -336,6 +450,9 @@ describe("Discord auth API", () => {
     assert.equal(response.status, 200);
     assert.equal(body.user.id, "777777777777777777");
     assert.equal(body.user.admin, true);
+    assert.equal(body.user.gameAccount.verificationStatus, "approved");
+    assert.equal(body.user.gameAccount.discordUserId, undefined);
+    currentAccount = null;
   });
 
   test("로그아웃은 세션 쿠키를 만료시킨다", async () => {
@@ -344,6 +461,209 @@ describe("Discord auth API", () => {
     });
     assert.equal(response.status, 204);
     assert.match(response.headers.get("set-cookie"), /Max-Age=0/);
+  });
+});
+
+describe("game account verification API", () => {
+  before(() => {
+    featureFlags = { ...featureFlags, authentication: true, signup: true };
+  });
+
+  after(() => {
+    featureFlags = { ...featureFlags, authentication: false };
+  });
+
+  test("로그인하지 않은 사용자는 인증을 요청할 수 없다", async () => {
+    const response = await fetch(`${baseUrl}/api/verifications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gameNickname: "협곡의파괴자",
+        evidence: tinyJpeg,
+      }),
+    });
+    assert.equal(response.status, 401);
+  });
+
+  test("로그인 사용자는 게임 닉네임과 인증 사진을 제출한다", async () => {
+    currentAccount = null;
+    createdVerificationInput = null;
+    const response = await fetch(`${baseUrl}/api/verifications`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "wr_session=valid",
+      },
+      body: JSON.stringify({
+        gameNickname: "협곡의파괴자",
+        evidence: tinyJpeg,
+      }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 201);
+    assert.equal(body.verification.status, "pending");
+    assert.equal(body.verification.discordUserId, undefined);
+    assert.equal(body.verification.evidence, undefined);
+    assert.equal(
+      createdVerificationInput.identity.discordUserId,
+      "777777777777777777",
+    );
+    assert.equal(
+      createdVerificationInput.evidenceFile.filename,
+      "verification.jpg",
+    );
+  });
+
+  test("인증 사진 형식이 잘못되면 422", async () => {
+    currentAccount = null;
+    const response = await fetch(`${baseUrl}/api/verifications`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "wr_session=valid",
+      },
+      body: JSON.stringify({
+        gameNickname: "협곡의파괴자",
+        evidence: "not-an-image",
+      }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 422);
+    assert.equal(body.error.code, "validation_failed");
+  });
+
+  test("정지된 사용자는 인증을 요청할 수 없다", async () => {
+    currentAccount = {
+      discordUserId: "777777777777777777",
+      verificationStatus: "rejected",
+      banned: true,
+    };
+    const response = await fetch(`${baseUrl}/api/verifications`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "wr_session=valid",
+      },
+      body: JSON.stringify({
+        gameNickname: "협곡의파괴자",
+        evidence: tinyJpeg,
+      }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 403);
+    assert.equal(body.error.code, "user_banned");
+    currentAccount = null;
+  });
+
+  test("이미 승인된 사용자는 중복 인증을 요청할 수 없다", async () => {
+    currentAccount = {
+      discordUserId: "777777777777777777",
+      verificationStatus: "approved",
+      banned: false,
+    };
+    const response = await fetch(`${baseUrl}/api/verifications`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "wr_session=valid",
+      },
+      body: JSON.stringify({
+        gameNickname: "협곡의파괴자",
+        evidence: tinyJpeg,
+      }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 409);
+    assert.equal(body.error.code, "already_verified");
+    currentAccount = null;
+  });
+});
+
+describe("admin verification and user API", () => {
+  test("관리자는 인증 대기 목록을 조회한다", async () => {
+    pendingVerifications = [
+      {
+        verificationId: "666666666666666666",
+        discordUserId: "888888888888888888",
+        status: "pending",
+      },
+    ];
+    const response = await fetch(`${baseUrl}/api/admin/verifications`, {
+      headers: { Cookie: "wr_session=valid" },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.verifications.length, 1);
+  });
+
+  test("관리자는 인증 요청을 승인한다", async () => {
+    verificationDecisionInput = null;
+    const response = await fetch(
+      `${baseUrl}/api/admin/verifications/666666666666666666/status`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: "wr_session=valid",
+        },
+        body: JSON.stringify({ status: "approved" }),
+      },
+    );
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.verification.status, "approved");
+    assert.deepEqual(verificationDecisionInput, {
+      verificationId: "666666666666666666",
+      status: "approved",
+      adminId: "777777777777777777",
+    });
+  });
+
+  test("관리자는 사용자 목록을 조회한다", async () => {
+    users = [
+      {
+        discordUserId: "888888888888888888",
+        gameNickname: "협곡의파괴자",
+        banned: false,
+      },
+    ];
+    const response = await fetch(`${baseUrl}/api/admin/users`, {
+      headers: { Cookie: "wr_session=valid" },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.users[0].discordUserId, "888888888888888888");
+  });
+
+  test("사용자 정지 변경을 저장하고 감사 로그를 남긴다", async () => {
+    currentAccount = {
+      discordUserId: "888888888888888888",
+      gameNickname: "협곡의파괴자",
+      verificationStatus: "approved",
+      banned: false,
+    };
+    banInput = null;
+    auditInput = null;
+    const response = await fetch(
+      `${baseUrl}/api/admin/users/888888888888888888/ban`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: "wr_session=valid",
+        },
+        body: JSON.stringify({ banned: true }),
+      },
+    );
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.deepEqual(banInput, {
+      discordUserId: "888888888888888888",
+      banned: true,
+    });
+    assert.equal(auditInput.action, "user.banned");
+    assert.equal(body.user.banned, true);
+    currentAccount = null;
   });
 });
 

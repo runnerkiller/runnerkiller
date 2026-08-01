@@ -4,39 +4,48 @@
 > 큰 그림은 [`../DISCORD_BACKEND_PLAN.md`](../DISCORD_BACKEND_PLAN.md)를 먼저 읽어라.
 > 이 문서는 "그 계획 중 실제로 어디까지 됐고, 왜 그렇게 만들었는지"를 설명한다.
 
-## 현재 최신 상태 — 3단계 OAuth와 관리자 검수 완료
+## 현재 최신 상태 — 4단계 게임 계정 인증 백엔드 완료
 
 - 브랜치: `feat/discord-bridge-skeleton`이며 `main`에는 병합하지 않았다.
-- Bridge 버전: `0.3.0`
-- 로컬 Node.js 24에서 `npm test` 실행: **131개 전부 통과**
+- Bridge 버전: `0.4.0`
+- 로컬 Node.js 24에서 `npm test` 실행: **160개 전부 통과**
 - Discord 실제 토큰을 사용한 통합 테스트와 프런트엔드 연결은 아직 하지 않았다.
-- Discord OAuth Authorization Code 로그인, state 검증, 로그아웃을 구현했다.
-- 세션은 DB 없이 검증 가능한 HMAC 서명 쿠키이며 기본 8시간 후 만료된다.
-- `GET /api/me`는 로그인 사용자와 Discord 관리자 역할 여부를 반환한다.
-- 관리자 API는 매 요청마다 세션과 Discord 역할을 확인한다.
-- 승인·반려 시 원본 제보와 사진을 대상 채널로 복제하고 감사 로그를 남긴 뒤 대기 메시지를 삭제한다.
-- OAuth가 활성화되면 제보 제출자는 `DEV_REPORTER_DISCORD_ID`가 아니라 로그인 사용자 ID다.
+- `wr-users`에서 Discord ID 기준 사용자 상태를 읽고 수정한다.
+- 로그인 사용자가 게임 닉네임과 프로필 사진을 `wr-verifications`에 제출할 수 있다.
+- `/api/me`는 게임 닉네임, 인증 상태, 정지 상태를 내부 ID 없이 반환한다.
+- 관리자는 인증 대기 목록 조회, 승인·거절, 사용자 목록 조회, 정지·해제를 할 수 있다.
+- 인증 판정과 사용자 정지·해제는 모두 감사 로그에 남는다.
+- 인증 생성·판정 재시도는 기존 Discord 레코드를 재사용해 중복과 부분 실패를 복구한다.
+- 정지 사용자는 게임 계정 인증과 제보 제출이 차단된다. 투표 차단은 5단계 API에서 같은 검사를 재사용해야 한다.
 
-### 3단계 핵심 파일
+### 4단계 핵심 파일
 
 ```text
-src/auth/authService.js                  OAuth, state, 서명 세션, 관리자 역할
-src/repositories/auditRepository.js      관리자 조작 감사 이벤트
-src/repositories/reportRepository.js     대기 목록, 승인·반려, 사진 복제
-src/server.js                            auth/me/admin HTTP API
-tests/authService.test.js                OAuth와 세션 테스트
-tests/auditRepository.test.js            감사 로그 테스트
+src/repositories/userRepository.js          Discord 사용자 레코드와 정지 상태
+src/repositories/verificationRepository.js  인증 요청·사진·판정·복구
+src/validation/verificationValidation.js    게임 닉네임과 실제 이미지 검증
+src/server.js                               me/verification/admin/ban API
+tests/userRepository.test.js                사용자 저장소 테스트
+tests/verificationRepository.test.js        인증 저장소와 재시도 테스트
+tests/verificationValidation.test.js        인증 입력 검증 테스트
 ```
 
-### 다음 에이전트가 할 일 — 계획서 13절 4단계
+### 다음 에이전트가 할 일 — 계획서 13절 5단계
 
-1. `userRepository.js`와 `verificationRepository.js`를 Discord 메시지 저장 방식으로 구현한다.
-2. 로그인 사용자가 게임 닉네임과 인증 사진을 제출하는 API를 만든다.
-3. 관리자의 인증 대기 목록, 승인·거절 API를 만들고 모든 판정을 감사 로그에 남긴다.
-4. 정지 사용자 여부를 제보 제출과 이후 투표 요청 전에 검사한다.
-5. 프런트엔드 로그인 버튼과 `/api/me`를 연결하고 기존 자체 아이디/비밀번호 화면은 기능 플래그 뒤로 이동한다.
-6. 실제 비공개 Discord 개발 서버에서 OAuth 콜백, 쿠키, 사진 복제, 역할 판정을 통합 테스트한다.
-7. `PUBLIC_SITE_ORIGIN`과 `BRIDGE_PUBLIC_URL`이 HTTPS 실제 주소로 설정되기 전에는 운영 배포로 간주하지 않는다.
+1. `voteRepository.js`를 Discord 메시지 저장 방식으로 구현한다.
+2. 논리 키 `reportId + discordUserId`로 같은 사용자의 중복 투표를 막는다.
+3. Bridge 재시작 뒤 `wr-votes` 메시지만으로 중복 방지 인덱스를 복원한다.
+4. 로그인·인증 승인·비정지 사용자만 투표하게 하고 `userRepository` 정지 검사를 재사용한다.
+5. 승인 제보 목록에 up/down 합계와 신뢰도 점수를 결합한다.
+6. 동시 요청이 같은 논리 키를 통과하지 못하도록 직렬화 또는 잠금을 추가한다.
+7. 프런트엔드 전체 API 전환과 실제 Discord 통합 테스트는 계속 미완료이므로 운영 완료로 표시하지 않는다.
+
+## 3단계 완료 기록
+
+- Discord OAuth Authorization Code 로그인, state 검증, 로그아웃을 구현했다.
+- 세션은 DB 없이 검증 가능한 HMAC 서명 쿠키이며 기본 8시간 후 만료된다.
+- 관리자 API는 매 요청마다 세션과 Discord 역할을 확인한다.
+- 승인·반려 시 원본 제보와 사진을 대상 채널로 복제하고 감사 로그를 남긴 뒤 대기 메시지를 삭제한다.
 
 ## 2단계 완료 기록
 

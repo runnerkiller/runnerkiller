@@ -7,11 +7,21 @@ import {
 } from "./auth/authService.js";
 import { DiscordApiError } from "./discordClient.js";
 import { ReportNotFoundError } from "./repositories/reportRepository.js";
+import { UserNotFoundError, toOwnUser } from "./repositories/userRepository.js";
+import {
+  VerificationConflictError,
+  VerificationNotFoundError,
+  toOwnVerification,
+} from "./repositories/verificationRepository.js";
 import {
   REPORT_CATEGORIES,
   ReportValidationError,
   validateReportSubmission,
 } from "./validation/reportValidation.js";
+import {
+  VerificationValidationError,
+  validateVerificationSubmission,
+} from "./validation/verificationValidation.js";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
@@ -88,6 +98,18 @@ function adminDecisionIdFromPath(pathname) {
   return match?.[1] ?? null;
 }
 
+function adminVerificationIdFromPath(pathname) {
+  const match = pathname.match(
+    /^\/api\/admin\/verifications\/(\d{17,20})\/status$/,
+  );
+  return match?.[1] ?? null;
+}
+
+function adminUserIdFromPath(pathname) {
+  const match = pathname.match(/^\/api\/admin\/users\/(\d{17,20})\/ban$/);
+  return match?.[1] ?? null;
+}
+
 function sendRouteError(res, error, cors) {
   if (error instanceof RequestError) {
     sendError(res, error.status, error.code, error.message, cors);
@@ -112,8 +134,35 @@ function sendRouteError(res, error, cors) {
     );
     return;
   }
+  if (error instanceof VerificationValidationError) {
+    sendJson(
+      res,
+      422,
+      {
+        error: {
+          code: "validation_failed",
+          message: error.message,
+          issues: error.issues,
+        },
+      },
+      cors,
+    );
+    return;
+  }
   if (error instanceof ReportNotFoundError) {
     sendError(res, 404, "report_not_found", error.message, cors);
+    return;
+  }
+  if (error instanceof VerificationNotFoundError) {
+    sendError(res, 404, "verification_not_found", error.message, cors);
+    return;
+  }
+  if (error instanceof UserNotFoundError) {
+    sendError(res, 404, "user_not_found", error.message, cors);
+    return;
+  }
+  if (error instanceof VerificationConflictError) {
+    sendError(res, 409, "verification_conflict", error.message, cors);
     return;
   }
   if (error instanceof DiscordApiError) {
@@ -149,6 +198,9 @@ export function createRequestHandler({
   healthService,
   configRepository = null,
   reportRepository = null,
+  userRepository = null,
+  verificationRepository = null,
+  auditRepository = null,
   authService = null,
   devReporterDiscordId = null,
   publicSiteOrigin = null,
@@ -295,9 +347,290 @@ export function createRequestHandler({
         return;
       }
       try {
-        const user = authService.authenticate(req.headers.cookie);
-        const admin = await authService.isAdmin(user.id);
-        sendJson(res, 200, { user: { ...user, admin } }, cors);
+        const identity = authService.authenticate(req.headers.cookie);
+        const [admin, account] = await Promise.all([
+          authService.isAdmin(identity.id),
+          userRepository
+            ? userRepository.getByDiscordId(identity.id)
+            : Promise.resolve(null),
+        ]);
+        sendJson(
+          res,
+          200,
+          {
+            user: {
+              ...identity,
+              admin,
+              gameAccount: toOwnUser(account),
+            },
+          },
+          cors,
+        );
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/verifications") {
+      if (req.method !== "POST") {
+        sendError(res, 405, "method_not_allowed", "POST만 지원합니다.", {
+          ...cors,
+          Allow: "POST",
+        });
+        return;
+      }
+      if (!authService) {
+        sendError(
+          res,
+          503,
+          "auth_not_configured",
+          "Discord 로그인 설정이 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      if (!userRepository || !verificationRepository) {
+        sendError(
+          res,
+          503,
+          "verifications_not_configured",
+          "게임 계정 인증 채널 설정이 아직 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        const flags = configRepository
+          ? (await configRepository.get()).config
+          : { signup: true, maintenanceMode: false };
+        if (flags.maintenanceMode) {
+          throw new RequestError(
+            503,
+            "maintenance_mode",
+            "현재 점검 중입니다.",
+          );
+        }
+        if (flags.authentication === false || !flags.signup) {
+          throw new RequestError(
+            403,
+            "feature_disabled",
+            "현재 게임 계정 인증 요청을 받지 않습니다.",
+          );
+        }
+        const identity = authService.authenticate(req.headers.cookie);
+        const account = await userRepository.getByDiscordId(identity.id);
+        if (account?.banned) {
+          throw new RequestError(
+            403,
+            "user_banned",
+            "정지된 사용자는 게임 계정 인증을 요청할 수 없습니다.",
+          );
+        }
+        if (account?.verificationStatus === "approved") {
+          throw new RequestError(
+            409,
+            "already_verified",
+            "이미 승인된 게임 계정이 있습니다.",
+          );
+        }
+        const body = await readJsonBody(req);
+        const validated = validateVerificationSubmission(body);
+        const result = await verificationRepository.create(
+          {
+            discordUserId: identity.id,
+            discordUsernameSnapshot: identity.username,
+            gameNickname: validated.gameNickname,
+          },
+          validated.evidenceFile,
+        );
+        sendJson(
+          res,
+          result.recovered ? 200 : 201,
+          {
+            verification: toOwnVerification(result.verification),
+            recovered: result.recovered,
+          },
+          cors,
+        );
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/admin/verifications") {
+      if (!authService) {
+        sendError(
+          res,
+          503,
+          "auth_not_configured",
+          "Discord 로그인 설정이 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      if (!verificationRepository) {
+        sendError(
+          res,
+          503,
+          "verifications_not_configured",
+          "게임 계정 인증 채널 설정이 아직 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        await authService.requireAdmin(req.headers.cookie);
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          throw new RequestError(
+            405,
+            "method_not_allowed",
+            "GET만 지원합니다.",
+          );
+        }
+        const status = url.searchParams.get("status") || "pending";
+        if (status !== "pending") {
+          throw new RequestError(
+            400,
+            "unsupported_status",
+            "현재는 인증 대기 목록만 지원합니다.",
+          );
+        }
+        const result = await verificationRepository.list({
+          status,
+          before: url.searchParams.get("cursor") || null,
+          limit: url.searchParams.get("limit") || 30,
+        });
+        sendJson(res, 200, result, cors);
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    const adminVerificationId = adminVerificationIdFromPath(url.pathname);
+    if (adminVerificationId) {
+      if (!authService || !verificationRepository) {
+        sendError(
+          res,
+          503,
+          "verifications_not_configured",
+          "게임 계정 인증 관리자 기능이 설정되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        const admin = await authService.requireAdmin(req.headers.cookie);
+        if (req.method !== "PATCH") {
+          throw new RequestError(
+            405,
+            "method_not_allowed",
+            "PATCH만 지원합니다.",
+          );
+        }
+        const body = await readJsonBody(req, 8 * 1024);
+        if (!["approved", "rejected"].includes(body.status)) {
+          throw new RequestError(
+            422,
+            "invalid_status",
+            "approved 또는 rejected만 허용합니다.",
+          );
+        }
+        const result = await verificationRepository.decide(
+          adminVerificationId,
+          body.status,
+          admin.id,
+        );
+        sendJson(
+          res,
+          200,
+          {
+            verification: toOwnVerification(result.verification),
+            recovered: result.recovered,
+          },
+          cors,
+        );
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/admin/users") {
+      if (!authService || !userRepository) {
+        sendError(
+          res,
+          503,
+          "users_not_configured",
+          "사용자 관리자 기능이 설정되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        await authService.requireAdmin(req.headers.cookie);
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          throw new RequestError(
+            405,
+            "method_not_allowed",
+            "GET만 지원합니다.",
+          );
+        }
+        const result = await userRepository.list({
+          before: url.searchParams.get("cursor") || null,
+          limit: url.searchParams.get("limit") || 30,
+        });
+        sendJson(res, 200, result, cors);
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    const adminUserId = adminUserIdFromPath(url.pathname);
+    if (adminUserId) {
+      if (!authService || !userRepository || !auditRepository) {
+        sendError(
+          res,
+          503,
+          "users_not_configured",
+          "사용자 정지 관리자 기능이 설정되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        const admin = await authService.requireAdmin(req.headers.cookie);
+        if (req.method !== "PATCH") {
+          throw new RequestError(
+            405,
+            "method_not_allowed",
+            "PATCH만 지원합니다.",
+          );
+        }
+        const body = await readJsonBody(req, 8 * 1024);
+        if (typeof body.banned !== "boolean") {
+          throw new RequestError(
+            422,
+            "invalid_ban_status",
+            "banned에는 true 또는 false만 허용합니다.",
+          );
+        }
+        const before = await userRepository.getByDiscordId(adminUserId);
+        if (!before) throw new UserNotFoundError(adminUserId);
+        const user = await userRepository.setBanned(adminUserId, body.banned);
+        const recovered = before.banned === body.banned;
+        await auditRepository.create({
+          action: body.banned ? "user.banned" : "user.unbanned",
+          targetId: adminUserId,
+          actorDiscordId: admin.id,
+          before: { banned: Boolean(before.banned) },
+          after: { banned: body.banned },
+          metadata: recovered ? { reason: "existing_user_state" } : null,
+        });
+        sendJson(res, 200, { user, recovered }, cors);
       } catch (error) {
         sendRouteError(res, error, cors);
       }
@@ -479,6 +812,17 @@ export function createRequestHandler({
               );
             }
             reporterDiscordId = authService.authenticate(req.headers.cookie).id;
+            if (userRepository) {
+              const account =
+                await userRepository.getByDiscordId(reporterDiscordId);
+              if (account?.banned) {
+                throw new RequestError(
+                  403,
+                  "user_banned",
+                  "정지된 사용자는 제보를 제출할 수 없습니다.",
+                );
+              }
+            }
           }
           if (!reporterDiscordId) {
             throw new RequestError(
