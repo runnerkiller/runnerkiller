@@ -29,6 +29,10 @@ let createdVerificationInput = null;
 let verificationDecisionInput = null;
 let banInput = null;
 let auditInput = null;
+let createdVoteInput = null;
+let voteSummaries = {};
+let userVotes = [];
+let configUpdateInput = null;
 
 const tinyJpeg = `data:image/jpeg;base64,${Buffer.from([
   0xff, 0xd8, 0xff, 0xdb, 0x00,
@@ -44,6 +48,16 @@ const healthService = {
 const configRepository = {
   async get() {
     return { config: featureFlags };
+  },
+  async update(patch, adminId) {
+    configUpdateInput = { patch, adminId };
+    featureFlags = {
+      ...featureFlags,
+      ...patch,
+      updatedAt: "2026-08-01T01:00:00.000Z",
+    };
+    if (!featureFlags.evidenceUpload) featureFlags.evidenceRequired = false;
+    return { config: featureFlags, warnings: [] };
   },
 };
 
@@ -135,6 +149,33 @@ const auditRepository = {
   },
 };
 
+const voteRepository = {
+  async create(reportId, discordUserId, direction) {
+    createdVoteInput = { reportId, discordUserId, direction };
+    return {
+      voteId: "555555555555555555",
+      reportId,
+      discordUserId,
+      direction,
+      createdAt: "2026-08-01T00:00:00.000Z",
+    };
+  },
+  async summary(reportId) {
+    return voteSummaries[reportId] ?? { up: 0, down: 0, score: 0 };
+  },
+  async summaries(reportIds) {
+    return Object.fromEntries(
+      reportIds.map((reportId) => [
+        reportId,
+        voteSummaries[reportId] ?? { up: 0, down: 0, score: 0 },
+      ]),
+    );
+  },
+  async listByUser() {
+    return userVotes;
+  },
+};
+
 const authService = {
   startLogin(returnTo) {
     return {
@@ -180,6 +221,7 @@ before(async () => {
     reportRepository,
     userRepository,
     verificationRepository,
+    voteRepository,
     auditRepository,
     authService,
     devReporterDiscordId: "444444444444444444",
@@ -265,6 +307,9 @@ describe("reports API", () => {
         status: "approved",
       },
     ];
+    voteSummaries = {
+      "333333333333333333": { up: 3, down: 1, score: 2 },
+    };
     const response = await fetch(
       `${baseUrl}/api/reports?category=troll&query=협곡`,
     );
@@ -272,6 +317,7 @@ describe("reports API", () => {
     assert.equal(response.status, 200);
     assert.equal(body.reports.length, 1);
     assert.equal(body.options.category, "troll");
+    assert.deepEqual(body.reports[0].votes, { up: 3, down: 1, score: 2 });
   });
 
   test("지원하지 않는 분류는 400", async () => {
@@ -293,6 +339,7 @@ describe("reports API", () => {
     const body = await response.json();
     assert.equal(response.status, 200);
     assert.equal(body.report.nickname, "협곡의파괴자");
+    assert.deepEqual(body.report.votes, { up: 3, down: 1, score: 2 });
   });
 
   test("없는 승인 제보 상세는 404", async () => {
@@ -435,6 +482,12 @@ describe("Discord auth API", () => {
   });
 
   test("로그인 세션의 사용자와 관리자 여부를 반환한다", async () => {
+    userVotes = [
+      {
+        reportId: "333333333333333333",
+        direction: "up",
+      },
+    ];
     currentAccount = {
       discordUserId: "777777777777777777",
       gameNickname: "협곡의파괴자",
@@ -452,7 +505,9 @@ describe("Discord auth API", () => {
     assert.equal(body.user.admin, true);
     assert.equal(body.user.gameAccount.verificationStatus, "approved");
     assert.equal(body.user.gameAccount.discordUserId, undefined);
+    assert.deepEqual(body.user.votedReportIds, ["333333333333333333"]);
     currentAccount = null;
+    userVotes = [];
   });
 
   test("로그아웃은 세션 쿠키를 만료시킨다", async () => {
@@ -461,6 +516,152 @@ describe("Discord auth API", () => {
     });
     assert.equal(response.status, 204);
     assert.match(response.headers.get("set-cookie"), /Max-Age=0/);
+  });
+});
+
+describe("feature config API", () => {
+  test("공개 기능 설정에서 관리자 Discord ID를 숨긴다", async () => {
+    featureFlags = {
+      ...featureFlags,
+      voting: true,
+      updatedByDiscordId: "777777777777777777",
+    };
+    const response = await fetch(`${baseUrl}/api/config`);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.config.voting, true);
+    assert.equal(body.config.updatedByDiscordId, undefined);
+  });
+
+  test("관리자는 기능을 끄고 감사 로그를 남긴다", async () => {
+    configUpdateInput = null;
+    auditInput = null;
+    const response = await fetch(`${baseUrl}/api/admin/config`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "wr_session=valid",
+      },
+      body: JSON.stringify({ voting: false }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.config.voting, false);
+    assert.deepEqual(configUpdateInput, {
+      patch: { voting: false },
+      adminId: "777777777777777777",
+    });
+    assert.equal(auditInput.action, "config.updated");
+    featureFlags = { ...featureFlags, voting: true };
+  });
+
+  test("관리자 세션이 없으면 설정을 변경할 수 없다", async () => {
+    const response = await fetch(`${baseUrl}/api/admin/config`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voting: false }),
+    });
+    assert.equal(response.status, 401);
+  });
+});
+
+describe("votes API", () => {
+  before(() => {
+    featureFlags = {
+      ...featureFlags,
+      authentication: true,
+      voting: true,
+    };
+    approvedReports = [
+      {
+        reportId: "333333333333333333",
+        nickname: "협곡의파괴자",
+        status: "approved",
+      },
+    ];
+  });
+
+  after(() => {
+    featureFlags = { ...featureFlags, authentication: false };
+    currentAccount = null;
+  });
+
+  test("승인된 사용자는 공개 제보를 평가한다", async () => {
+    currentAccount = {
+      discordUserId: "777777777777777777",
+      verificationStatus: "approved",
+      banned: false,
+    };
+    createdVoteInput = null;
+    voteSummaries = {
+      "333333333333333333": { up: 4, down: 1, score: 3 },
+    };
+    const response = await fetch(
+      `${baseUrl}/api/reports/333333333333333333/votes`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: "wr_session=valid",
+        },
+        body: JSON.stringify({ direction: "up" }),
+      },
+    );
+    const body = await response.json();
+    assert.equal(response.status, 201);
+    assert.equal(body.vote.discordUserId, undefined);
+    assert.equal(body.summary.score, 3);
+    assert.deepEqual(createdVoteInput, {
+      reportId: "333333333333333333",
+      discordUserId: "777777777777777777",
+      direction: "up",
+    });
+  });
+
+  test("미인증 사용자의 평가는 차단한다", async () => {
+    currentAccount = {
+      discordUserId: "777777777777777777",
+      verificationStatus: "pending",
+      banned: false,
+    };
+    const response = await fetch(
+      `${baseUrl}/api/reports/333333333333333333/votes`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: "wr_session=valid",
+        },
+        body: JSON.stringify({ direction: "up" }),
+      },
+    );
+    const body = await response.json();
+    assert.equal(response.status, 403);
+    assert.equal(body.error.code, "verification_required");
+  });
+
+  test("평가 기능을 끄면 403을 반환한다", async () => {
+    currentAccount = {
+      discordUserId: "777777777777777777",
+      verificationStatus: "approved",
+      banned: false,
+    };
+    featureFlags = { ...featureFlags, voting: false };
+    const response = await fetch(
+      `${baseUrl}/api/reports/333333333333333333/votes`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: "wr_session=valid",
+        },
+        body: JSON.stringify({ direction: "up" }),
+      },
+    );
+    const body = await response.json();
+    featureFlags = { ...featureFlags, voting: true };
+    assert.equal(response.status, 403);
+    assert.equal(body.error.code, "feature_disabled");
   });
 });
 

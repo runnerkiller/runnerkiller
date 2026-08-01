@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 
 import {
   parseConfigMessage,
+  buildConfigMessageContent,
   extractJsonBlock,
   toPublicConfig,
   createConfigRepository,
   ConfigParseError,
+  ConfigUpdateError,
   FEATURE_FLAG_DEFAULTS,
   CONFIG_SCHEMA_VERSION,
 } from "../src/repositories/configRepository.js";
@@ -117,7 +119,10 @@ describe("parseConfigMessage", () => {
   });
 
   test("JSON이 아예 없으면 예외를 던진다", () => {
-    assert.throws(() => parseConfigMessage("설정 메시지를 지웠습니다"), ConfigParseError);
+    assert.throws(
+      () => parseConfigMessage("설정 메시지를 지웠습니다"),
+      ConfigParseError,
+    );
   });
 
   test("배열은 설정으로 인정하지 않는다", () => {
@@ -132,6 +137,18 @@ describe("toPublicConfig", () => {
     assert.equal(publicConfig.updatedByDiscordId, undefined);
     assert.equal(publicConfig.publicList, true);
     assert.equal(publicConfig.updatedAt, "2026-08-01T00:00:00.000Z");
+  });
+});
+
+describe("buildConfigMessageContent", () => {
+  test("Discord에서 사람이 읽을 설명과 JSON을 함께 만든다", () => {
+    const content = buildConfigMessageContent({
+      schemaVersion: 1,
+      type: "config",
+      voting: false,
+    });
+    assert.match(content, /기능 설정/);
+    assert.equal(parseConfigMessage(content).config.voting, false);
   });
 });
 
@@ -219,7 +236,10 @@ describe("createConfigRepository", () => {
   });
 
   test("첫 요청부터 Discord가 죽어 있으면 예외를 던진다", async () => {
-    const { repository } = makeRepository({ status: 401, body: { message: "bad token" } });
+    const { repository } = makeRepository({
+      status: 401,
+      body: { message: "bad token" },
+    });
     await assert.rejects(() => repository.get(), /거부/);
   });
 
@@ -227,7 +247,10 @@ describe("createConfigRepository", () => {
     let clock = 1000;
     const { repository } = makeRepository(
       [
-        { status: 200, body: { content: configMessageContent({ voting: false }) } },
+        {
+          status: 200,
+          body: { content: configMessageContent({ voting: false }) },
+        },
         { status: 500, body: {} },
       ],
       { cacheTtlMs: 1, now: () => clock },
@@ -248,7 +271,10 @@ describe("createConfigRepository", () => {
     let clock = 1000;
     const { repository } = makeRepository(
       [
-        { status: 200, body: { content: configMessageContent({ signup: false }) } },
+        {
+          status: 200,
+          body: { content: configMessageContent({ signup: false }) },
+        },
         { status: 200, body: { content: "누가 실수로 지웠습니다" } },
       ],
       { cacheTtlMs: 1, now: () => clock },
@@ -288,5 +314,69 @@ describe("createConfigRepository", () => {
 
     const restored = await repository.get();
     assert.equal(restored.config.maintenanceMode, true);
+  });
+
+  test("부분 변경을 고정 메시지에 저장하고 캐시를 갱신한다", async () => {
+    let clock = Date.parse("2026-08-01T01:00:00.000Z");
+    const updatedContent = configMessageContent({
+      voting: false,
+      updatedAt: "2026-08-01T01:00:00.000Z",
+      updatedByDiscordId: "444444444444444444",
+    });
+    const { repository, fetchImpl } = makeRepository(
+      [
+        { status: 200, body: { content: configMessageContent() } },
+        { status: 200, body: { content: updatedContent } },
+      ],
+      { now: () => clock },
+    );
+
+    const result = await repository.update(
+      { voting: false },
+      "444444444444444444",
+    );
+
+    assert.equal(result.config.voting, false);
+    assert.equal(result.config.updatedByDiscordId, "444444444444444444");
+    assert.equal(fetchImpl.calls[1].init.method, "PATCH");
+    const sent = JSON.parse(fetchImpl.calls[1].init.body);
+    assert.match(sent.content, /"voting": false/);
+    assert.equal((await repository.get()).cached, true);
+    clock += 1;
+  });
+
+  test("알 수 없는 키와 boolean이 아닌 값을 거부한다", async () => {
+    const { repository, fetchImpl } = makeRepository({
+      status: 200,
+      body: { content: configMessageContent() },
+    });
+    await assert.rejects(
+      () => repository.update({ futureFlag: true }, "444444444444444444"),
+      ConfigUpdateError,
+    );
+    await assert.rejects(
+      () => repository.update({ voting: "yes" }, "444444444444444444"),
+      ConfigUpdateError,
+    );
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  test("증거 업로드를 끄면 증거 필수 설정도 함께 끈다", async () => {
+    const updatedContent = configMessageContent({
+      evidenceUpload: false,
+      evidenceRequired: false,
+      updatedByDiscordId: "444444444444444444",
+    });
+    const { repository, fetchImpl } = makeRepository([
+      { status: 200, body: { content: configMessageContent() } },
+      { status: 200, body: { content: updatedContent } },
+    ]);
+    const result = await repository.update(
+      { evidenceUpload: false, evidenceRequired: true },
+      "444444444444444444",
+    );
+    const sent = JSON.parse(fetchImpl.calls[1].init.body);
+    assert.match(sent.content, /"evidenceRequired": false/);
+    assert.equal(result.config.evidenceRequired, false);
   });
 });

@@ -6,7 +6,15 @@ import {
   parseCookies,
 } from "./auth/authService.js";
 import { DiscordApiError } from "./discordClient.js";
+import {
+  ConfigUpdateError,
+  toPublicConfig,
+} from "./repositories/configRepository.js";
 import { ReportNotFoundError } from "./repositories/reportRepository.js";
+import {
+  DuplicateVoteError,
+  toPublicVote,
+} from "./repositories/voteRepository.js";
 import { UserNotFoundError, toOwnUser } from "./repositories/userRepository.js";
 import {
   VerificationConflictError,
@@ -93,6 +101,11 @@ function reportIdFromPath(pathname) {
   return match?.[1] ?? null;
 }
 
+function voteReportIdFromPath(pathname) {
+  const match = pathname.match(/^\/api\/reports\/(\d{17,20})\/votes$/);
+  return match?.[1] ?? null;
+}
+
 function adminDecisionIdFromPath(pathname) {
   const match = pathname.match(/^\/api\/admin\/reports\/(\d{17,20})\/status$/);
   return match?.[1] ?? null;
@@ -165,6 +178,25 @@ function sendRouteError(res, error, cors) {
     sendError(res, 409, "verification_conflict", error.message, cors);
     return;
   }
+  if (error instanceof DuplicateVoteError) {
+    sendError(res, 409, "duplicate_vote", error.message, cors);
+    return;
+  }
+  if (error instanceof ConfigUpdateError) {
+    sendJson(
+      res,
+      422,
+      {
+        error: {
+          code: "invalid_feature_flags",
+          message: error.message,
+          issues: error.issues,
+        },
+      },
+      cors,
+    );
+    return;
+  }
   if (error instanceof DiscordApiError) {
     sendError(
       res,
@@ -200,6 +232,7 @@ export function createRequestHandler({
   reportRepository = null,
   userRepository = null,
   verificationRepository = null,
+  voteRepository = null,
   auditRepository = null,
   authService = null,
   devReporterDiscordId = null,
@@ -348,11 +381,14 @@ export function createRequestHandler({
       }
       try {
         const identity = authService.authenticate(req.headers.cookie);
-        const [admin, account] = await Promise.all([
+        const [admin, account, myVotes] = await Promise.all([
           authService.isAdmin(identity.id),
           userRepository
             ? userRepository.getByDiscordId(identity.id)
             : Promise.resolve(null),
+          voteRepository
+            ? voteRepository.listByUser(identity.id)
+            : Promise.resolve([]),
         ]);
         sendJson(
           res,
@@ -362,8 +398,93 @@ export function createRequestHandler({
               ...identity,
               admin,
               gameAccount: toOwnUser(account),
+              votedReportIds: myVotes.map((vote) => vote.reportId),
             },
           },
+          cors,
+        );
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/config") {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        sendError(res, 405, "method_not_allowed", "GET만 지원합니다.", {
+          ...cors,
+          Allow: "GET, HEAD",
+        });
+        return;
+      }
+      if (!configRepository) {
+        sendError(
+          res,
+          503,
+          "config_not_configured",
+          "기능 설정 저장소가 준비되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        const result = await configRepository.get();
+        sendJson(res, 200, { config: toPublicConfig(result.config) }, cors);
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/admin/config") {
+      if (!authService || !configRepository || !auditRepository) {
+        sendError(
+          res,
+          503,
+          "admin_config_not_configured",
+          "관리자 기능 설정이 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        const admin = await authService.requireAdmin(req.headers.cookie);
+        if (req.method === "GET" || req.method === "HEAD") {
+          const result = await configRepository.get({ forceRefresh: true });
+          sendJson(
+            res,
+            200,
+            {
+              config: toPublicConfig(result.config),
+              warnings: result.warnings,
+              stale: result.stale,
+            },
+            cors,
+          );
+          return;
+        }
+        if (req.method !== "PATCH") {
+          throw new RequestError(
+            405,
+            "method_not_allowed",
+            "GET과 PATCH만 지원합니다.",
+          );
+        }
+        const body = await readJsonBody(req, 16 * 1024);
+        const before = (await configRepository.get()).config;
+        const result = await configRepository.update(body, admin.id);
+        await auditRepository.create({
+          action: "config.updated",
+          targetId: "feature-flags",
+          actorDiscordId: admin.id,
+          before: toPublicConfig(before),
+          after: toPublicConfig(result.config),
+          metadata: { changedKeys: Object.keys(body) },
+        });
+        sendJson(
+          res,
+          200,
+          { config: toPublicConfig(result.config), warnings: result.warnings },
           cors,
         );
       } catch (error) {
@@ -790,7 +911,27 @@ export function createRequestHandler({
             before: url.searchParams.get("cursor") || null,
             limit: url.searchParams.get("limit") || 30,
           });
-          sendJson(res, 200, result, cors);
+          const voteSummaries = voteRepository
+            ? await voteRepository.summaries(
+                result.reports.map((report) => report.reportId),
+              )
+            : {};
+          sendJson(
+            res,
+            200,
+            {
+              ...result,
+              reports: result.reports.map((report) => ({
+                ...report,
+                votes: voteSummaries[report.reportId] ?? {
+                  up: 0,
+                  down: 0,
+                  score: 0,
+                },
+              })),
+            },
+            cors,
+          );
           return;
         }
 
@@ -803,6 +944,7 @@ export function createRequestHandler({
             );
           }
           let reporterDiscordId = devReporterDiscordId;
+          let reporterAccount = null;
           if (flags.authentication !== false) {
             if (!authService) {
               throw new RequestError(
@@ -815,6 +957,7 @@ export function createRequestHandler({
             if (userRepository) {
               const account =
                 await userRepository.getByDiscordId(reporterDiscordId);
+              reporterAccount = account;
               if (account?.banned) {
                 throw new RequestError(
                   403,
@@ -834,7 +977,16 @@ export function createRequestHandler({
           const body = await readJsonBody(req);
           const validated = validateReportSubmission(body, { flags });
           const report = await reportRepository.create(
-            { ...validated.report, reporterDiscordId },
+            {
+              ...validated.report,
+              reporterDiscordId,
+              reporterNickname:
+                flags.reporterIdentity !== false &&
+                validated.report.revealReporter &&
+                reporterAccount?.verificationStatus === "approved"
+                  ? reporterAccount.gameNickname
+                  : null,
+            },
             validated.evidenceFiles,
           );
           sendJson(res, 201, { report }, cors);
@@ -845,6 +997,98 @@ export function createRequestHandler({
           405,
           "method_not_allowed",
           "GET과 POST만 지원합니다.",
+        );
+      } catch (error) {
+        sendRouteError(res, error, cors);
+      }
+      return;
+    }
+
+    const voteReportId = voteReportIdFromPath(url.pathname);
+    if (voteReportId) {
+      if (req.method !== "POST") {
+        sendError(res, 405, "method_not_allowed", "POST만 지원합니다.", {
+          ...cors,
+          Allow: "POST",
+        });
+        return;
+      }
+      if (!voteRepository || !reportRepository || !userRepository) {
+        sendError(
+          res,
+          503,
+          "voting_not_configured",
+          "평가 기능 설정이 아직 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      if (!authService) {
+        sendError(
+          res,
+          503,
+          "auth_not_configured",
+          "Discord 로그인 설정이 완료되지 않았습니다.",
+          cors,
+        );
+        return;
+      }
+      try {
+        const flags = configRepository
+          ? (await configRepository.get()).config
+          : { voting: true, authentication: true, maintenanceMode: false };
+        if (flags.maintenanceMode) {
+          throw new RequestError(
+            503,
+            "maintenance_mode",
+            "현재 점검 중입니다.",
+          );
+        }
+        if (flags.voting === false || flags.authentication === false) {
+          throw new RequestError(
+            403,
+            "feature_disabled",
+            "현재 평가 기능이 꺼져 있습니다.",
+          );
+        }
+        const identity = authService.authenticate(req.headers.cookie);
+        const account = await userRepository.getByDiscordId(identity.id);
+        if (!account || account.verificationStatus !== "approved") {
+          throw new RequestError(
+            403,
+            "verification_required",
+            "승인된 게임 계정만 평가할 수 있습니다.",
+          );
+        }
+        if (account.banned) {
+          throw new RequestError(
+            403,
+            "user_banned",
+            "정지된 사용자는 평가할 수 없습니다.",
+          );
+        }
+        await reportRepository.getApprovedById(voteReportId);
+        const body = await readJsonBody(req, 8 * 1024);
+        if (!["up", "down"].includes(body.direction)) {
+          throw new RequestError(
+            422,
+            "invalid_vote_direction",
+            "direction에는 up 또는 down만 허용합니다.",
+          );
+        }
+        const vote = await voteRepository.create(
+          voteReportId,
+          identity.id,
+          body.direction,
+        );
+        sendJson(
+          res,
+          201,
+          {
+            vote: toPublicVote(vote),
+            summary: await voteRepository.summary(voteReportId),
+          },
+          cors,
         );
       } catch (error) {
         sendRouteError(res, error, cors);
@@ -890,7 +1134,10 @@ export function createRequestHandler({
           );
         }
         const report = await reportRepository.getApprovedById(reportId);
-        sendJson(res, 200, { report }, cors);
+        const voteSummary = voteRepository
+          ? await voteRepository.summary(reportId)
+          : { up: 0, down: 0, score: 0 };
+        sendJson(res, 200, { report: { ...report, votes: voteSummary } }, cors);
       } catch (error) {
         sendRouteError(res, error, cors);
       }

@@ -28,6 +28,24 @@ export class ConfigParseError extends Error {
   }
 }
 
+export class ConfigUpdateError extends Error {
+  constructor(message, issues = []) {
+    super(message);
+    this.name = "ConfigUpdateError";
+    this.issues = issues;
+  }
+}
+
+export function buildConfigMessageContent(config) {
+  const content = `협곡 기록소 기능 설정입니다. 웹 관리자 화면에서 수정합니다.\n\`\`\`json\n${JSON.stringify(config, null, 2)}\n\`\`\``;
+  if (content.length > 2_000) {
+    throw new ConfigUpdateError(
+      "Discord 설정 메시지 길이 제한을 초과했습니다.",
+    );
+  }
+  return content;
+}
+
 /** 메시지 본문에서 JSON 부분만 뽑아낸다. 운영자가 설명을 함께 적어둘 수 있다. */
 export function extractJsonBlock(content) {
   if (typeof content !== "string") return null;
@@ -109,7 +127,9 @@ export function parseConfigMessage(content, options = {}) {
     } else {
       flags[key] = fallback;
       if (value !== undefined) {
-        warnings.push(`${key}가 true/false가 아니라 기본값(${fallback})을 씁니다.`);
+        warnings.push(
+          `${key}가 true/false가 아니라 기본값(${fallback})을 씁니다.`,
+        );
       }
     }
   }
@@ -205,8 +225,59 @@ export function createConfigRepository({
     return { ...result, cached: false };
   }
 
+  async function update(patch, updatedByDiscordId) {
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+      throw new ConfigUpdateError("설정 변경값은 JSON 객체여야 합니다.");
+    }
+    const entries = Object.entries(patch);
+    const issues = [];
+    if (entries.length === 0)
+      issues.push("변경할 기능을 하나 이상 보내 주세요.");
+    for (const [key, value] of entries) {
+      if (!Object.hasOwn(FEATURE_FLAG_DEFAULTS, key)) {
+        issues.push(`지원하지 않는 기능 키입니다: ${key}`);
+      } else if (typeof value !== "boolean") {
+        issues.push(`${key}에는 true 또는 false만 허용합니다.`);
+      }
+    }
+    if (issues.length) {
+      throw new ConfigUpdateError(
+        "기능 설정 변경값이 올바르지 않습니다.",
+        issues,
+      );
+    }
+
+    const current = (await get({ forceRefresh: true })).config;
+    const timestamp = new Date(now()).toISOString();
+    const next = {
+      schemaVersion: CONFIG_SCHEMA_VERSION,
+      type: "config",
+      ...Object.fromEntries(
+        Object.keys(FEATURE_FLAG_DEFAULTS).map((key) => [key, current[key]]),
+      ),
+      ...patch,
+      updatedAt: timestamp,
+      updatedByDiscordId,
+    };
+    if (!next.evidenceUpload) next.evidenceRequired = false;
+
+    const message = await discordClient.editMessage(channelId, messageId, {
+      content: buildConfigMessageContent(next),
+    });
+    const parsed = parseConfigMessage(message.content, { messageId });
+    const result = {
+      config: parsed.config,
+      warnings: parsed.warnings,
+      fetchedAt: timestamp,
+      stale: false,
+    };
+    cache = { fetchedAt: now(), result };
+    return { ...result, cached: false };
+  }
+
   return {
     get,
+    update,
     /** 캐시를 비운다. 재시작 없이 Discord에서 다시 읽게 할 때 쓴다. */
     invalidate() {
       cache = null;

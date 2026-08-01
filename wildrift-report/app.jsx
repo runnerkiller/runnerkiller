@@ -373,6 +373,19 @@
             </p>
           </header>
 
+          <p
+            className="mx-4 mb-3 rounded p-3 text-xs leading-relaxed"
+            style={{
+              backgroundColor: `${C.gold}14`,
+              border: `1px solid ${C.gold}44`,
+              color: C.gold,
+            }}
+          >
+            첫 배포 테스트용 데모 모드입니다. 데이터는 이 브라우저에만 저장되며
+            다른 사람과 공유되지 않습니다. 관리자 → 테스트 도구에서 샘플을 만들
+            수 있습니다.
+          </p>
+
           {memoryOnly && (
             <p
               className="mx-4 rounded p-2 text-xs"
@@ -566,5 +579,7 @@
   }
 
   const root = ReactDOM.createRoot(document.getElementById("root"));
-  root.render(<App />);
+  const useDiscord = WR.RUNTIME?.mode === "discord";
+  const RootApp = useDiscord ? window.DiscordApp : App;
+  root.render(<RootApp />);
 })();

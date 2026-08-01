@@ -27,10 +27,20 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
+      - name: Prepare public frontend only
+        run: |
+          mkdir -p _site/components _site/constants _site/services _site/utils
+          cp wildrift-report/index.html wildrift-report/app.jsx wildrift-report/discord-app.jsx wildrift-report/runtime-config.js _site/
+          cp wildrift-report/components/*.jsx _site/components/
+          cp wildrift-report/constants/*.js _site/constants/
+          cp wildrift-report/services/*.js _site/services/
+          cp wildrift-report/utils/*.js _site/utils/
+          touch _site/.nojekyll
+
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./wildrift-report
+          path: ./_site
 
       - name: Deploy to Pages
         id: deployment

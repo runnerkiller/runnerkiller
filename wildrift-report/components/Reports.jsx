@@ -81,12 +81,21 @@
     );
   }
 
-  function Evidence({ reportId }) {
-    const [shots, setShots] = useState(null);
+  function Evidence({ reportId, evidence = null }) {
+    const remoteShots = Array.isArray(evidence)
+      ? evidence.map((item) => item?.url || item?.proxyUrl).filter(Boolean)
+      : null;
+    const [shots, setShots] = useState(remoteShots);
     const [zoom, setZoom] = useState(null);
 
     useEffect(() => {
       let alive = true;
+      if (remoteShots) {
+        setShots(remoteShots);
+        return () => {
+          alive = false;
+        };
+      }
       (async () => {
         const res = await store.get(shotKey(reportId), true);
         if (alive) {
@@ -100,7 +109,7 @@
       return () => {
         alive = false;
       };
-    }, [reportId]);
+    }, [reportId, evidence]);
 
     if (shots === null)
       return (
@@ -249,7 +258,7 @@
                   <ReporterTag r={r} />
                 </div>
                 <p className="mt-2 text-sm leading-relaxed">{r.description}</p>
-                <Evidence reportId={r.id} />
+                <Evidence reportId={r.id} evidence={r.evidence} />
                 <VoteButtons
                   reportId={r.id}
                   votes={votes}
@@ -275,7 +284,13 @@
     );
   }
 
-  function SubmitForm({ onSubmit, session, account, featureFlags }) {
+  function SubmitForm({
+    onSubmit,
+    session,
+    account,
+    featureFlags,
+    persistEvidence = true,
+  }) {
     const [nickname, setNickname] = useState("");
     const [category, setCategory] = useState("hack");
     const [tags, setTags] = useState([]);
@@ -333,31 +348,40 @@
       if (e.length) return;
 
       setBusy(true);
-      const id = uid();
-      if (shots.length)
-        await store.set(shotKey(id), JSON.stringify(shots), true);
-      await onSubmit({
-        id,
-        nickname: nickname.trim(),
-        category,
-        tags,
-        mode,
-        occurredAt,
-        description: description.trim(),
-        hasEvidence: shots.length > 0,
-        reporterNickname: canReveal && reveal ? account.gameNickname : null,
-        status: "pending",
-        createdAt: new Date().toISOString(),
-      });
-      setNickname("");
-      setTags([]);
-      setOccurredAt("");
-      setDescription("");
-      setShots([]);
-      setReveal(false);
-      setBusy(false);
-      setDone(true);
-      setTimeout(() => setDone(false), 4000);
+      try {
+        const id = uid();
+        if (persistEvidence && shots.length)
+          await store.set(shotKey(id), JSON.stringify(shots), true);
+        await onSubmit(
+          {
+            id,
+            nickname: nickname.trim(),
+            category,
+            tags,
+            mode,
+            occurredAt,
+            description: description.trim(),
+            hasEvidence: shots.length > 0,
+            reporterNickname: canReveal && reveal ? account.gameNickname : null,
+            revealReporter: Boolean(canReveal && reveal),
+            status: "pending",
+            createdAt: new Date().toISOString(),
+          },
+          shots,
+        );
+        setNickname("");
+        setTags([]);
+        setOccurredAt("");
+        setDescription("");
+        setShots([]);
+        setReveal(false);
+        setDone(true);
+        setTimeout(() => setDone(false), 4000);
+      } catch (error) {
+        setErrors([error?.message || "제보를 제출하지 못했습니다."]);
+      } finally {
+        setBusy(false);
+      }
     };
 
     const fieldStyle = {

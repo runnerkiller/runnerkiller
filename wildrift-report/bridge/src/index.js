@@ -10,6 +10,7 @@ import { createConfigRepository } from "./repositories/configRepository.js";
 import { createReportRepository } from "./repositories/reportRepository.js";
 import { createUserRepository } from "./repositories/userRepository.js";
 import { createVerificationRepository } from "./repositories/verificationRepository.js";
+import { createVoteRepository } from "./repositories/voteRepository.js";
 import { createHealthService } from "./health.js";
 import { createServer } from "./server.js";
 
@@ -93,6 +94,18 @@ const reportRepository =
       })
     : null;
 
+const voteRepository = config.discord.channels.votes
+  ? createVoteRepository({
+      discordClient,
+      channelId: config.discord.channels.votes,
+      onInvalidRecord: (error, message) =>
+        console.warn(
+          `투표 메시지 ${message?.id ?? "?"}를 건너뜁니다:`,
+          error.message,
+        ),
+    })
+  : null;
+
 const oauthReady = Boolean(
   config.discord.clientId &&
     config.discord.clientSecret &&
@@ -131,6 +144,7 @@ const server = createServer({
   reportRepository,
   userRepository,
   verificationRepository,
+  voteRepository,
   auditRepository,
   authService,
   devReporterDiscordId: config.devReporterDiscordId,

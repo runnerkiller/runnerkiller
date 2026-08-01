@@ -43,7 +43,7 @@
           <ReporterTag r={r} />
         </div>
         <p className="mt-3 text-sm leading-relaxed">{r.description}</p>
-        <Evidence reportId={r.id} />
+        <Evidence reportId={r.id} evidence={r.evidence} />
         {flags.length > 0 && (
           <p
             className="mt-3 rounded p-2 text-xs"

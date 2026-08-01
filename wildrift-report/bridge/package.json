@@ -1,6 +1,6 @@
 {
   "name": "wildrift-report-bridge",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "private": true,
   "description": "협곡 기록소 웹사이트와 비공개 Discord 서버를 잇는 무상태 중계 서버",
   "type": "module",
