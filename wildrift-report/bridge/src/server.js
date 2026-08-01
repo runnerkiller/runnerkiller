@@ -270,12 +270,34 @@ export function createRequestHandler({
         });
         return;
       }
+      // /health 자체가 원인 불명으로 응답 없이 멈추는 문제가 있어서, 내부에서
+      // 무슨 일이 있어도 이 시간 안에는 응답을 보내도록 강제한다. 감시 도구나
+      // 브라우저가 무한정 기다리는 것보다 빠른 오류 응답이 훨씬 낫다.
+      const HEALTH_TIMEOUT_MS = 8_000;
+      let timeoutHandle;
+      const checkPromise = healthService.check();
+      // healthService.check()가 타임아웃 이후에 뒤늦게 거부되어도 "처리되지
+      // 않은 Promise 거부"로 프로세스가 죽지 않도록 미리 잡아둔다.
+      checkPromise.catch(() => {});
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(
+            new Error(
+              `상태 확인이 ${HEALTH_TIMEOUT_MS}ms 안에 끝나지 않았습니다.`,
+            ),
+          );
+        }, HEALTH_TIMEOUT_MS);
+      });
+
       try {
-        const result = await healthService.check();
+        const result = await Promise.race([checkPromise, timeoutPromise]);
+        clearTimeout(timeoutHandle);
         // 감시 도구가 HTTP 상태 코드만 보고도 판단할 수 있게 맞춰준다.
         const status = result.status === "error" ? 503 : 200;
         sendJson(res, status, result, cors);
       } catch (error) {
+        clearTimeout(timeoutHandle);
+        console.error(`/health 처리 실패: ${error?.message ?? error}`);
         sendError(
           res,
           500,

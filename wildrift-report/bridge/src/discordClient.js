@@ -91,6 +91,7 @@ export function createDiscordClient({
     let lastError = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      const attemptStartedAt = Date.now();
       const timeout = AbortSignal.timeout(timeoutMs);
       let response;
       try {
@@ -107,6 +108,13 @@ export function createDiscordClient({
         });
       } catch (cause) {
         // 네트워크 오류나 타임아웃. 남은 시도가 있으면 잠시 뒤 다시 시도한다.
+        // /health가 원인 불명으로 오래 걸리는 문제를 진단하려고 시도마다
+        // 걸린 시간을 남긴다. AbortSignal이 제때 작동하는지도 이 로그로 보인다.
+        console.error(
+          `Discord ${method} ${path} 시도 ${attempt + 1}/${maxRetries + 1} 실패 ` +
+            `(${Date.now() - attemptStartedAt}ms 후, timeoutMs=${timeoutMs}): ` +
+            `${cause?.name ?? "Error"}: ${cause?.message ?? cause}`,
+        );
         lastError = new DiscordApiError("Discord에 연결하지 못했습니다.", {
           method,
           path,
@@ -116,6 +124,11 @@ export function createDiscordClient({
         await sleep(2 ** attempt * 500);
         continue;
       }
+
+      console.log(
+        `Discord ${method} ${path} 시도 ${attempt + 1}/${maxRetries + 1} ` +
+          `-> ${response.status} (${Date.now() - attemptStartedAt}ms)`,
+      );
 
       const text = await response.text();
       const body = parseBody(text);
