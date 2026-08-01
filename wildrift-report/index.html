@@ -1,35 +1,76 @@
 <!doctype html>
 <html lang="ko">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>협곡 기록소</title>
-  <meta name="description" content="와일드 리프트 비정상 플레이 제보 · 커뮤니티 신뢰도 평가" />
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>협곡 기록소</title>
+    <meta
+      name="description"
+      content="와일드 리프트 비정상 플레이 제보 · 커뮤니티 신뢰도 평가"
+    />
 
-  <!-- Tailwind (빌드 없이 CDN으로 사용) -->
-  <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tailwind (빌드 없이 CDN으로 사용) -->
+    <script src="https://cdn.tailwindcss.com"></script>
 
-  <!-- React 18 -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- React 18 -->
+    <script
+      src="https://unpkg.com/react@18/umd/react.production.min.js"
+      crossorigin
+    ></script>
+    <script
+      src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+      crossorigin
+    ></script>
 
-  <!-- Babel: 브라우저에서 JSX를 즉시 변환. 소규모 프로토타입에는 충분하지만, 트래픽이
+    <!-- Babel: 브라우저에서 JSX를 즉시 변환. 소규모 프로토타입에는 충분하지만, 트래픽이
        늘어나면 Vite 등으로 사전 빌드하는 게 좋습니다 (README 참고). -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <style>
-    html, body { background: #0E1622; margin: 0; }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="text/babel" data-presets="react" src="./constants/app.js"></script>
-  <script type="text/babel" data-presets="react" src="./services/storage.js"></script>
-  <script type="text/babel" data-presets="react" src="./utils/security.js"></script>
-  <script type="text/babel" data-presets="react" src="./components/Common.jsx"></script>
-  <script type="text/babel" data-presets="react" src="./components/Auth.jsx"></script>
-  <script type="text/babel" data-presets="react" src="./components/Reports.jsx"></script>
-  <script type="text/babel" data-presets="react" src="./components/Admin.jsx"></script>
-  <script type="text/babel" data-presets="react" src="./app.jsx"></script>
-</body>
+    <style>
+      html,
+      body {
+        background: #0e1622;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script
+      type="text/babel"
+      data-presets="react"
+      src="./constants/app.js"
+    ></script>
+    <script
+      type="text/babel"
+      data-presets="react"
+      src="./services/storage.js"
+    ></script>
+    <script
+      type="text/babel"
+      data-presets="react"
+      src="./utils/security.js"
+    ></script>
+    <script
+      type="text/babel"
+      data-presets="react"
+      src="./components/Common.jsx"
+    ></script>
+    <script
+      type="text/babel"
+      data-presets="react"
+      src="./components/Auth.jsx"
+    ></script>
+    <script
+      type="text/babel"
+      data-presets="react"
+      src="./components/Reports.jsx"
+    ></script>
+    <script
+      type="text/babel"
+      data-presets="react"
+      src="./components/Admin.jsx"
+    ></script>
+    <script type="text/babel" data-presets="react" src="./app.jsx"></script>
+  </body>
 </html>
