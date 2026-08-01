@@ -1,0 +1,64 @@
+name: Bridge tests
+
+on:
+  push:
+    branches: ["main", "feat/**", "fix/**"]
+    paths:
+      - "wildrift-report/bridge/**"
+      - ".github/workflows/bridge-tests.yml"
+  pull_request:
+    paths:
+      - "wildrift-report/bridge/**"
+      - ".github/workflows/bridge-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wildrift-report/bridge
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run tests
+        run: npm test
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fail if a real .env was committed
+        run: |
+          if git ls-files --error-unmatch '**/.env' >/dev/null 2>&1; then
+            echo "::error::.env 파일이 커밋되어 있습니다. 즉시 삭제하고 토큰을 재발급하세요."
+            exit 1
+          fi
+          echo ".env 파일 없음"
+
+      - name: Fail if a Discord bot token looks committed
+        run: |
+          if git grep -nIE '[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}' -- . ':!*.md'; then
+            echo "::error::Discord 봇 토큰처럼 보이는 문자열이 있습니다. 토큰을 재발급하세요."
+            exit 1
+          fi
+          echo "봇 토큰 형태의 문자열 없음"
+
+      - name: Fail if .env.example has values filled in
+        run: |
+          if grep -nE '^[A-Z_]+=.+' wildrift-report/bridge/.env.example; then
+            echo "::error::.env.example에는 값을 넣지 않습니다."
+            exit 1
+          fi
+          echo ".env.example 비어 있음"
