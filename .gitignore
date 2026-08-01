@@ -1,0 +1,11 @@
+# 실제 토큰과 채널 ID가 들어가는 파일 (절대 커밋 금지)
+.env
+.env.*
+!.env.example
+
+node_modules/
+npm-debug.log*
+*.local
+
+.DS_Store
+Thumbs.db
