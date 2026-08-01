@@ -3,6 +3,10 @@
 웹사이트(GitHub Pages)와 비공개 Discord 서버 사이를 잇는 무상태 중계 서버다.
 설계 배경과 전체 로드맵은 [`../DISCORD_BACKEND_PLAN.md`](../DISCORD_BACKEND_PLAN.md)에 있다.
 
+> **다음에 이어서 작업할 에이전트는 [`HANDOFF.md`](./HANDOFF.md)를 먼저 읽어라.**
+> 이 README는 "어떻게 설정하고 실행하는지"를 다루고, HANDOFF.md는
+> "무엇을 왜 이렇게 만들었고 다음에 뭘 해야 하는지"를 다룬다.
+
 ## 지금 구현된 범위
 
 계획서 16절이 정한 첫 단계까지만 구현했다.
