@@ -3,6 +3,8 @@
 와일드 리프트 비정상 플레이 제보를 운영자 검수 후 공개하고, 인증된 이용자가
 신뢰함/의심됨 평가를 남기는 모바일 우선 웹사이트다.
 
+전체 시스템이 어떻게 맞물려 동작하는지는 [ARCHITECTURE.md](./ARCHITECTURE.md)에 정리했다.
+
 ## 현재 배포 모드
 
 첫 GitHub Pages 배포는 `runtime-config.js`의 `mode: "demo"`로 동작한다.

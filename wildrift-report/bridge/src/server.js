@@ -1151,6 +1151,13 @@ export function createRequestHandler({
 export function createServer(options) {
   const handle = createRequestHandler(options);
   return createHttpServer((req, res) => {
+    const startedAt = Date.now();
+    const { method, url } = req;
+    // 응답이 실제로 끝났는지, 어디서 멈춰 있는지 배포 로그로 바로 확인하기 위한 최소 로그.
+    res.on("finish", () => {
+      console.log(`${method} ${url} -> ${res.statusCode} (${Date.now() - startedAt}ms)`);
+    });
+
     handle(req, res).catch((error) => {
       if (!res.headersSent) {
         sendError(res, 500, "internal_error", "서버 내부 오류입니다.");
