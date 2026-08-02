@@ -152,7 +152,10 @@ const server = createServer({
   onError: (error) => console.error("요청 처리 중 오류:", error),
 });
 
-server.listen(config.port, () => {
+// 호스트를 명시하지 않으면 Node가 기본으로 IPv6 전용(::)에 바인딩하는
+// 환경이 있다. Render 같은 컨테이너 인프라는 내부망에서 헬스체크를 붙이는데,
+// 그 경로로는 연결이 안 될 수 있어 반드시 0.0.0.0(모든 인터페이스)으로 연다.
+server.listen(config.port, "0.0.0.0", () => {
   console.log(`Bridge가 http://localhost:${config.port} 에서 실행 중입니다.`);
   console.log(`상태 확인: http://localhost:${config.port}/health`);
   if (config.publicSiteOrigin) {
