@@ -55,6 +55,9 @@ export function createHealthService({
         error: {
           message: error?.message ?? "알 수 없는 오류",
           status: error?.status ?? null,
+          // Render 대시보드 로그에 접근할 수 없는 상황에서 원인을 바로 보려고
+          // 임시로 남긴다. 비밀값이 아니라 설정 JSON 미리보기일 뿐이다.
+          contentPreview: error?.contentPreview ?? undefined,
         },
       };
     }

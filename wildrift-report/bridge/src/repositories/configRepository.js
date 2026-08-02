@@ -25,6 +25,9 @@ export class ConfigParseError extends Error {
     this.name = "ConfigParseError";
     this.messageId = details.messageId ?? null;
     this.cause = details.cause ?? null;
+    // Discord에서 실제로 어떤 내용을 받았는지 /health로 바로 보려고 남긴다.
+    // 대시보드 로그 접근이 안 되는 환경에서 원인 파악용으로 추가했다.
+    this.contentPreview = details.contentPreview ?? null;
   }
 }
 
@@ -75,6 +78,10 @@ export function parseConfigMessage(content, options = {}) {
   if (!raw) {
     throw new ConfigParseError("설정 메시지에서 JSON을 찾지 못했습니다.", {
       messageId: options.messageId,
+      contentPreview:
+        typeof content === "string"
+          ? `len=${content.length} value=${JSON.stringify(content.slice(0, 300))}`
+          : `typeof=${typeof content} value=${JSON.stringify(content)}`,
     });
   }
 
