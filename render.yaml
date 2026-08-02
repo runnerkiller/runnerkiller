@@ -6,7 +6,7 @@ services:
     rootDir: wildrift-report/bridge
     buildCommand: "echo 'no dependencies to install'"
     startCommand: "node src/index.js"
-    healthCheckPath: /health
+    healthCheckPath: /livez
     envVars:
       - key: PORT
         value: 10000

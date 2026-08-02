@@ -262,6 +262,22 @@ export function createRequestHandler({
       return;
     }
 
+    if (url.pathname === "/livez") {
+      // Render 등 호스팅의 자체 헬스체크(배포 성공 판정)가 이 경로를 본다.
+      // Discord를 전혀 부르지 않고 프로세스가 요청을 받을 수 있는지만 확인한다.
+      // /health(Discord 상태까지 확인)가 느려지거나 멈춰도 배포 자체가
+      // "죽었다"고 오판되어 트래픽이 아예 안 붙는 사태를 막기 위해 분리했다.
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        sendError(res, 405, "method_not_allowed", "GET만 지원합니다.", {
+          ...cors,
+          Allow: "GET, HEAD",
+        });
+        return;
+      }
+      sendJson(res, 200, { status: "ok" }, cors);
+      return;
+    }
+
     if (url.pathname === "/health") {
       if (req.method !== "GET" && req.method !== "HEAD") {
         sendError(res, 405, "method_not_allowed", "GET만 지원합니다.", {

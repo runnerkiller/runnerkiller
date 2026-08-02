@@ -235,6 +235,27 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
+describe("GET /livez", () => {
+  test("Discord 상태와 무관하게 즉시 200을 돌려준다", async () => {
+    healthResult = { status: "error" };
+    healthError = new Error("healthService는 절대 호출되면 안 된다");
+
+    const response = await fetch(`${baseUrl}/livez`);
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.status, "ok");
+
+    healthResult = { status: "ok" };
+    healthError = null;
+  });
+
+  test("GET이 아니면 405", async () => {
+    const response = await fetch(`${baseUrl}/livez`, { method: "POST" });
+    assert.equal(response.status, 405);
+  });
+});
+
 describe("GET /health", () => {
   test("정상이면 200과 상태를 돌려준다", async () => {
     healthResult = { status: "ok", version: "0.1.0" };
