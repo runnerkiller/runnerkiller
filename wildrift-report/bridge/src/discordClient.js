@@ -58,7 +58,7 @@ export function createDiscordClient({
   sleep = defaultSleep,
   maxRetries = 3,
   timeoutMs = 10_000,
-  userAgent = "WildriftReportBridge (https://github.com/runnerkiller/runnerkiller, 0.4.0)",
+  userAgent = "WildriftReportBridge (https://github.com/runnerkiller/rift-archive, 0.4.0)",
 } = {}) {
   if (!token) throw new Error("Discord 봇 토큰이 필요합니다.");
   if (typeof fetchImpl !== "function") {

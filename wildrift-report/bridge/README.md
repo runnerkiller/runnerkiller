@@ -209,7 +209,7 @@ GitHub Pages는 정적 파일만 서빙하므로, Bridge는 어딘가 다른 곳
 루트에 있는 `render.yaml`이 서비스 정의를 이미 담고 있어 Blueprint로 한 번에 만들 수 있다.
 
 1. Render에 GitHub 계정으로 로그인한다.
-2. **New → Blueprint**를 선택하고 이 저장소(`runnerkiller/runnerkiller`)를 연결한다.
+2. **New → Blueprint**를 선택하고 이 저장소(`runnerkiller/rift-archive`)를 연결한다.
 3. Render가 `render.yaml`을 읽어 `wildrift-report-bridge` 서비스를 만든다. 이 파일은
    `rootDir: wildrift-report/bridge`로 지정돼 있어 Bridge 폴더만 실행한다.
 4. `sync: false`로 표시된 환경변수는 Render가 값을 직접 입력하라고 물어본다.

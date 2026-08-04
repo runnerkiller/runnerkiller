@@ -27,7 +27,7 @@
 
 ## ① 사용자 브라우저
 
-방문자가 `https://runnerkiller.github.io/runnerkiller/`에 접속하면 보는 화면이다.
+방문자가 `https://runnerkiller.github.io/rift-archive/`에 접속하면 보는 화면이다.
 React로 만든 웹앱이며, 별도 설치 없이 브라우저에서 바로 실행된다.
 
 ## ② GitHub Pages — 정적 파일 창고
@@ -134,4 +134,5 @@ Discord 앱에서 데이터를 직접 눈으로 확인하거나 수동으로 고
 
 - 게임 계정 인증 사진을 관리자가 승인/거절하는 흐름을 실제 트래픽으로
   한 번 더 검증
-- 도메인(저장소 이름)을 바꾸면 이 문서의 GitHub Pages 주소도 함께 갱신할 것
+- Bridge에 Discord OAuth 값(`DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
+  `BRIDGE_PUBLIC_URL`, `SESSION_SIGNING_SECRET`)을 채워 실제 로그인을 켤 것
