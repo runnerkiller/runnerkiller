@@ -548,7 +548,11 @@
           throw error;
         }),
         api.request("/api/me").catch((error) => {
-          if (error.status === 401) return null;
+          // 401(로그인 안 함), 503(Bridge에 OAuth 설정이 아직 없음) 둘 다
+          // "로그인된 사용자 없음"으로 취급한다. 둘 중 하나만 잡으면 나머지
+          // 경우 방문자 전원에게 오류 배너가 뜬 채로 사이트가 멈춘다.
+          if (error.status === 401 || error.code === "auth_not_configured")
+            return null;
           throw error;
         }),
       ]);
