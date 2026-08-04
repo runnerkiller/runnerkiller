@@ -23,8 +23,11 @@
     ></script>
 
     <!-- Babel: 브라우저에서 JSX를 즉시 변환. 소규모 프로토타입에는 충분하지만, 트래픽이
-       늘어나면 Vite 등으로 사전 빌드하는 게 좋습니다 (README 참고). -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+       늘어나면 Vite 등으로 사전 빌드하는 게 좋습니다 (README 참고).
+       버전을 7대로 고정한다 — 8대부터 JSX 기본 런타임이 automatic으로 바뀌어
+       react/jsx-runtime을 require()로 불러오려 하는데, 이 페이지는 UMD로만
+       React를 불러오므로 require가 없어 전체 화면이 조용히 빈 화면이 된다. -->
+    <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 
     <style>
       html,
