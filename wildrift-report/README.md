@@ -5,20 +5,16 @@
 
 전체 시스템이 어떻게 맞물려 동작하는지는 [ARCHITECTURE.md](./ARCHITECTURE.md)에 정리했다.
 
-## 현재 배포 모드
+## 운영 방식
 
-첫 GitHub Pages 배포는 `runtime-config.js`의 `mode: "demo"`로 동작한다.
-데모 데이터는 방문자의 브라우저에만 저장되므로 실제 서비스 데이터가 아니다.
+사이트는 Discord Bridge(`bridge/`)를 통해서만 동작한다. 로그인은 Discord OAuth,
+관리자 권한은 Discord 서버 역할로 확인한다. 브라우저에 데이터를 저장하는
+데모 모드나 하드코딩된 관리자 비밀번호는 없다.
 
-- 관리자 데모 비밀번호: `admin`
-- 관리자 → 테스트 도구 → 샘플 데이터 생성으로 주요 화면을 확인할 수 있다.
-- 데모 계정: `demo_approved` / `demo1234`
-
-Discord Bridge가 외부 HTTPS 주소에서 실행되면 `runtime-config.js`를 다음처럼 바꾼다.
+`runtime-config.js`에 Bridge 주소만 넣는다.
 
 ```js
 WR.RUNTIME = Object.freeze({
-  mode: "discord",
   bridgeUrl: "https://내-bridge-주소.example.com",
 });
 ```
@@ -26,18 +22,23 @@ WR.RUNTIME = Object.freeze({
 이 파일에는 공개 주소만 넣는다. 봇 토큰, OAuth Client Secret, 세션 서명 키는
 반드시 `bridge/.env`에만 보관한다.
 
+## 사이트 문구·기능 설정
+
+사이트 이름, 한 줄 설명, 공지 문구, 기능 On/Off는 관리자로 로그인한 뒤
+"관리자 → 사이트 설정 / 기능 설정" 화면에서 바꾼다. 코드를 고치거나
+다시 배포할 필요가 없다 — 저장하면 Discord의 `wr-config` 고정 메시지가
+바뀌고 방문자 화면에 바로 반영된다.
+
 ## 구조
 
 ```text
 index.html                 정적 사이트 진입점
-runtime-config.js          demo/discord 모드 선택 (비밀정보 금지)
-app.jsx                    브라우저 저장 기반 데모 앱
-discord-app.jsx            Discord Bridge 운영 앱
-components/                인증·제보·관리자·공용 UI
-constants/                 색상·분류·기능 기본값
-services/storage.js        데모 저장소
+runtime-config.js          Bridge 주소 설정 (비밀정보 금지)
+discord-app.jsx            운영 앱 (진입점 겸 관리자 화면)
+components/                제보·공용 UI
+constants/                 색상·분류·기본값
 services/apiClient.js      Bridge HTTP 클라이언트
-utils/security.js          입력 검사·이미지 압축·데모 해시
+utils/security.js          입력 검사·이미지 압축
 bridge/                    Node.js Discord 중계 서버 (Pages 배포에서 제외)
 ```
 
@@ -50,7 +51,8 @@ python3 -m http.server 8000 --directory wildrift-report
 ```
 
 그 뒤 `http://localhost:8000`에 접속한다. `file://`로 직접 열면 브라우저의 파일
-로딩 제한 때문에 동작이 달라질 수 있다.
+로딩 제한 때문에 동작이 달라질 수 있다. Bridge가 로컬에서 켜져 있어야
+데이터가 뜬다 (`bridge/README.md` 참고).
 
 Bridge 테스트:
 
@@ -64,7 +66,6 @@ npm test
 - 제보는 사실로 확정된 내용이 아니며 실제 운영 전 법률 검토와 이의제기 절차가 필요하다.
 - 게임 계정 인증은 Riot 공식 API가 아니라 스크린샷 육안 검수다.
 - Discord는 소규모 초기 운영을 위한 저장소다. 검색량과 데이터가 커지면 정식 DB로 이전해야 한다.
-- 데모 모드의 로그인과 관리자 비밀번호는 실제 보안 기능이 아니다. 운영 모드는 Discord OAuth와 역할 검사를 사용한다.
 
 전체 Discord 설계는 [DISCORD_BACKEND_PLAN.md](./DISCORD_BACKEND_PLAN.md), 서버 설치는
 [bridge/README.md](./bridge/README.md)를 참고한다.

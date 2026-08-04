@@ -26,7 +26,8 @@
 | 게임 계정 인증 제출·승인·거절            | 완료 |
 | 사용자 조회·정지·해제                    | 완료 |
 | 투표 저장소·중복 방지·신뢰도 집계        | 완료 |
-| demo/discord 이중 모드 프런트엔드        | 완료 |
+| 사이트 이름·설명·공지 문구 관리자 설정   | 완료 |
+| Bridge 전용 프런트엔드 (데모 모드 없음)  | 완료 |
 
 현재 `POST /api/reports`는 `wr-reports-pending` 채널에 제보 메시지와 사진을
 저장한다. 관리자는 Discord 역할로 권한을 확인한 뒤 승인·반려할 수 있다.
@@ -116,6 +117,9 @@ Discord 설정에서 **고급 → 개발자 모드**를 켜면 채널을 우클�
   "voting": true,
   "reporterIdentity": true,
   "maintenanceMode": false,
+  "siteTitle": "협곡 기록소",
+  "siteTagline": "와일드 리프트 비정상 플레이 제보 · 승인 후 공개",
+  "noticeText": "",
   "updatedAt": "2026-08-01T00:00:00.000Z",
   "updatedByDiscordId": null
 }
@@ -126,6 +130,10 @@ Discord 설정에서 **고급 → 개발자 모드**를 켜면 채널을 우클�
 `DISCORD_CONFIG_MESSAGE_ID`에 넣는다.
 
 메시지 앞뒤에 설명을 적어도 된다. Bridge는 ` ```json ` 블록만 읽는다.
+
+`siteTitle`·`siteTagline`·`noticeText`는 안 넣어도 된다 — 빠지면 기본값을 쓴다.
+나중에 바꿀 땐 이 메시지를 직접 고치는 대신 관리자 화면(사이트 설정 탭)을 쓰면
+길이 제한과 저장을 Bridge가 대신 처리해준다.
 
 ### 설정 값이 잘못되면
 
@@ -226,12 +234,11 @@ Bridge 주소를 얻었으면 `wildrift-report/runtime-config.js`를 고친다.
 
 ```js
 WR.RUNTIME = Object.freeze({
-  mode: "discord",
   bridgeUrl: "https://wildrift-report-bridge-XXXX.onrender.com",
 });
 ```
 
-`main`에 push하면 GitHub Pages가 다시 배포되고, 사이트가 데모 모드 대신 이 Bridge를 통해
+`main`에 push하면 GitHub Pages가 다시 배포되고, 사이트가 이 Bridge를 통해
 Discord에 저장된 데이터를 읽고 쓰기 시작한다. 이 파일에는 봇 토큰이나 비밀값을 절대
 넣지 않는다 — 공개 저장소에 그대로 노출된다.
 
@@ -441,6 +448,11 @@ PATCH /api/admin/config
 
 관리자 설정 변경 본문은 `{ "voting": false }`처럼 필요한 boolean 항목만 보낸다.
 Bridge가 `wr-config` 고정 메시지를 갱신하고 `wr-audit-log`에 변경 전후 값을 기록한다.
+
+같은 경로로 사이트 문구도 바꾼다: `siteTitle`(최대 30자), `siteTagline`(80자),
+`noticeText`(200자, 비우면 공지가 안 보임). 예: `{ "siteTitle": "새 이름" }`.
+길이를 넘기면 저장을 거부한다 — Discord 메시지 전체가 2000자를 넘으면 저장이
+안 되기 때문이다.
 
 ## 보안 규칙
 

@@ -38,11 +38,9 @@ GitHub Pages는 HTML/CSS/JS 파일을 **그대로 보여주기만** 하는 서�
 - 비용: 0원 (공개 저장소는 무료)
 - `main` 브랜치에 push할 때마다 자동으로 다시 배포된다
   (`.github/workflows/pages.yml`)
-- 이 사이트는 두 가지 모드로 동작할 수 있다 (`runtime-config.js`에서 전환):
-  - **`demo` 모드**: 데이터를 방문자 브라우저의 `localStorage`에만 저장한다.
-    사람마다 다른 데이터를 본다. 지금 실제로 켜져 있는 모드다.
-  - **`discord` 모드**: 아래 ③번(Render)에게 데이터를 물어본다. 모든 방문자가
-    같은 데이터를 본다. 아직 전환 전이다.
+- 사이트는 항상 ③번(Render의 Bridge)에게 데이터를 물어본다. 브라우저에만
+  저장하는 데모 모드는 없다 — 모든 방문자가 같은 Discord 데이터를 본다.
+  Bridge 주소는 `runtime-config.js`에 있다.
 
 **GitHub Pages는 Discord에 직접 연결할 수 없다.** 정적 파일만 서빙하는 서비스라
 프로그램을 실행시킬 수 없기 때문이다. 그래서 ③번이 필요하다.
@@ -120,41 +118,20 @@ Discord 앱에서 데이터를 직접 눈으로 확인하거나 수동으로 고
 
 ## 지금 배포 상태
 
-| 부품 | 상태 | 주소 |
-|---|---|---|
-| GitHub Pages | 배포됨, 정상 접속 확인 | https://runnerkiller.github.io/runnerkiller/ |
-| Render (Bridge) | 배포됨, 서버는 켜져 있음 | (Render 대시보드에서 확인) |
-| Discord 서버·채널 | 생성 완료, 설정 메시지 등록·고정 완료 | (비공개) |
-| 사이트 ↔ Bridge 연결 | **아직 안 함** — `runtime-config.js`가 여전히 `demo` 모드 | - |
+| 부품 | 상태 |
+|---|---|
+| GitHub Pages | 배포됨, Bridge와 연결되어 정상 동작 확인 |
+| Render (Bridge) | 배포됨, `/health` 정상 (`status: ok`, Discord 연결됨) |
+| Discord 서버·채널 | 생성 완료, 설정 메시지 등록·고정 완료 |
+| 사이트 ↔ Bridge 연결 | **완료** — 브라우저에만 저장하는 데모 모드는 코드에서 아예 제거했다 |
 
-**현재 알려진 문제 (조사 중)**: Render의 공개 주소로 `/health`를 호출하면
-120초를 기다려도 응답이 단 한 바이트도 안 온다. TCP 연결 자체는 0.05초 만에
-성공하므로 Render 인프라까지는 도달하지만, 그 뒤로 어떤 응답도 오지 않는다.
+과거 겪었던 문제와 원인은 [bridge/HANDOFF.md](./bridge/HANDOFF.md)에 남겨뒀다
+(요약: Render 컨테이너 바인딩 주소, 배포 판정용 헬스체크와 상태 확인용
+헬스체크가 같은 경로를 써서 생긴 충돌, Discord의 Message Content Intent
+저장 누락 — 전부 해결됨).
 
-가장 유력한 원인: `render.yaml`의 `healthCheckPath`가 원래 `/health`로
-지정되어 있었는데, Render는 **이 경로로 배포 성공 여부 자체를 판단한다**.
-Discord 응답이 느릴 때 `/health`가 오래 걸리거나 멈추면, Render가 "이 배포는
-살아있지 않다"고 판단해 트래픽을 아예 연결해주지 않았을 수 있다 — 그러면
-Bridge 코드를 아무리 고쳐도 외부에서는 계속 무응답으로 보인다.
+## 다음에 손볼 만한 것
 
-이 가설에 따라 다음을 고쳤다 (커밋 예정, 아직 배포 결과 확인 전):
-
-- `GET /livez` 경로를 새로 만들었다. Discord를 전혀 부르지 않고 즉시
-  `{ "status": "ok" }`를 돌려준다. `render.yaml`의 `healthCheckPath`를
-  `/health` 대신 이 경로로 바꿨다.
-- `GET /health`는 사람이 실제 상태를 확인할 때 쓰는 용도로 남겨두되, 내부에서
-  무슨 일이 있어도 8초 안에는 응답하도록 강제 타임아웃을 걸었다.
-- Discord로 보내는 요청마다 시도 횟수와 걸린 시간을 로그로 남기게 했다.
-
-이 문제가 해결되기 전까지는 사이트를 `discord` 모드로 전환하지 않는다.
-
-## 다음 남은 일
-
-1. `/livez` 분리 배포 후 외부에서 응답이 오는지 확인 (Render가 이 배포를
-   "살아있다"고 판단하는지)
-2. 응답이 오면 `/health`도 정상 범위(길어도 몇 초) 안에 도는지 확인
-3. Bridge가 Discord와 실제로 통신되는지 (`/health`의 `discord.connected`가
-   `true`인지) 확인
-4. `runtime-config.js`를 `discord` 모드로 전환, Render 주소 입력
-5. 실제로 제보를 하나 제출해보고 Discord 채널에 메시지가 생기는지, 사이트
-   목록에도 뜨는지 끝까지 확인
+- 게임 계정 인증 사진을 관리자가 승인/거절하는 흐름을 실제 트래픽으로
+  한 번 더 검증
+- 도메인(저장소 이름)을 바꾸면 이 문서의 GitHub Pages 주소도 함께 갱신할 것

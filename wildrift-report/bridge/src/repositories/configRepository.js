@@ -2,11 +2,7 @@ import { DiscordApiError } from "../discordClient.js";
 
 export const CONFIG_SCHEMA_VERSION = 1;
 
-/**
- * 기본값은 프런트엔드의 WR.DEFAULT_FEATURE_FLAGS와 일부러 똑같이 맞췄다.
- * 데모 모드와 Discord 모드가 다르게 동작하면 검수 결과를 믿을 수 없게 된다.
- * maintenanceMode는 계획서 4.1에만 있는 값이라 여기서 기본값을 정한다.
- */
+/** 켜고 끄는 기능 스위치. 값은 반드시 true/false다. */
 export const FEATURE_FLAG_DEFAULTS = Object.freeze({
   publicList: true,
   reportSubmission: true,
@@ -17,6 +13,23 @@ export const FEATURE_FLAG_DEFAULTS = Object.freeze({
   voting: true,
   reporterIdentity: true,
   maintenanceMode: false,
+});
+
+/**
+ * 관리자가 웹 화면에서 고치는 사이트 문구. 기능 스위치와 달리 문자열이라
+ * 길이 제한을 따로 둔다. Discord 메시지 전체가 2000자를 넘으면 저장이
+ * 불가능하므로 넉넉하지 않게 잡았다.
+ */
+export const SITE_TEXT_DEFAULTS = Object.freeze({
+  siteTitle: "협곡 기록소",
+  siteTagline: "와일드 리프트 비정상 플레이 제보 · 승인 후 공개",
+  noticeText: "",
+});
+
+export const SITE_TEXT_MAX_LENGTH = Object.freeze({
+  siteTitle: 30,
+  siteTagline: 80,
+  noticeText: 200,
 });
 
 export class ConfigParseError extends Error {
@@ -149,6 +162,27 @@ export function parseConfigMessage(content, options = {}) {
     );
   }
 
+  const texts = {};
+  for (const [key, fallback] of Object.entries(SITE_TEXT_DEFAULTS)) {
+    const value = parsed[key];
+    if (typeof value === "string") {
+      const limit = SITE_TEXT_MAX_LENGTH[key];
+      if (value.length > limit) {
+        // 길이를 넘겨도 화면이 깨지지 않도록 자른다. 통째로 버리면 관리자가
+        // 애써 적은 문구가 조용히 사라져 더 혼란스럽다.
+        texts[key] = value.slice(0, limit);
+        warnings.push(`${key}가 ${limit}자를 넘어 잘랐습니다.`);
+      } else {
+        texts[key] = value;
+      }
+    } else {
+      texts[key] = fallback;
+      if (value !== undefined) {
+        warnings.push(`${key}가 문자열이 아니라 기본값을 씁니다.`);
+      }
+    }
+  }
+
   const updatedAt =
     typeof parsed.updatedAt === "string" ? parsed.updatedAt : null;
   const updatedByDiscordId =
@@ -161,6 +195,7 @@ export function parseConfigMessage(content, options = {}) {
       schemaVersion,
       type: "config",
       ...flags,
+      ...texts,
       updatedAt,
       updatedByDiscordId,
     },
@@ -239,19 +274,25 @@ export function createConfigRepository({
     const entries = Object.entries(patch);
     const issues = [];
     if (entries.length === 0)
-      issues.push("변경할 기능을 하나 이상 보내 주세요.");
+      issues.push("변경할 설정을 하나 이상 보내 주세요.");
     for (const [key, value] of entries) {
-      if (!Object.hasOwn(FEATURE_FLAG_DEFAULTS, key)) {
-        issues.push(`지원하지 않는 기능 키입니다: ${key}`);
-      } else if (typeof value !== "boolean") {
-        issues.push(`${key}에는 true 또는 false만 허용합니다.`);
+      if (Object.hasOwn(FEATURE_FLAG_DEFAULTS, key)) {
+        if (typeof value !== "boolean") {
+          issues.push(`${key}에는 true 또는 false만 허용합니다.`);
+        }
+      } else if (Object.hasOwn(SITE_TEXT_DEFAULTS, key)) {
+        const limit = SITE_TEXT_MAX_LENGTH[key];
+        if (typeof value !== "string") {
+          issues.push(`${key}에는 문자열만 허용합니다.`);
+        } else if (value.length > limit) {
+          issues.push(`${key}는 ${limit}자를 넘을 수 없습니다.`);
+        }
+      } else {
+        issues.push(`지원하지 않는 설정 키입니다: ${key}`);
       }
     }
     if (issues.length) {
-      throw new ConfigUpdateError(
-        "기능 설정 변경값이 올바르지 않습니다.",
-        issues,
-      );
+      throw new ConfigUpdateError("설정 변경값이 올바르지 않습니다.", issues);
     }
 
     const current = (await get({ forceRefresh: true })).config;
@@ -261,6 +302,9 @@ export function createConfigRepository({
       type: "config",
       ...Object.fromEntries(
         Object.keys(FEATURE_FLAG_DEFAULTS).map((key) => [key, current[key]]),
+      ),
+      ...Object.fromEntries(
+        Object.keys(SITE_TEXT_DEFAULTS).map((key) => [key, current[key]]),
       ),
       ...patch,
       updatedAt: timestamp,

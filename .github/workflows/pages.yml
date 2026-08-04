@@ -30,7 +30,7 @@ jobs:
       - name: Prepare public frontend only
         run: |
           mkdir -p _site/components _site/constants _site/services _site/utils
-          cp wildrift-report/index.html wildrift-report/app.jsx wildrift-report/discord-app.jsx wildrift-report/runtime-config.js _site/
+          cp wildrift-report/index.html wildrift-report/discord-app.jsx wildrift-report/runtime-config.js _site/
           cp wildrift-report/components/*.jsx _site/components/
           cp wildrift-report/constants/*.js _site/constants/
           cp wildrift-report/services/*.js _site/services/

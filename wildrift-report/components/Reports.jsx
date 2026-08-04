@@ -1,20 +1,8 @@
 (function () {
   const { useState, useEffect, useMemo, useRef } = React;
-  const {
-    C,
-    CATS,
-    CAT_KEYS,
-    MODES,
-    NICK_RE,
-    ID_RE,
-    ACC_COLOR,
-    ACC_LABEL,
-    STATUS_LABEL,
-    STATUS_COLOR,
-  } = WR;
-  const { store, shotKey, verifyKey } = WR;
+  const { C, CATS, CAT_KEYS, MODES, NICK_RE } = WR;
   const { Chip, SpectrumBar, TrustBadge } = window;
-  const { scanPII, fmtDate, compress, uid } = WR;
+  const { scanPII, fmtDate, compress } = WR;
   function VoteButtons({
     reportId,
     votes,
@@ -82,33 +70,15 @@
   }
 
   function Evidence({ reportId, evidence = null }) {
+    // 사진은 Discord 첨부파일 URL로만 온다. 없으면 빈 목록으로 둔다.
     const remoteShots = Array.isArray(evidence)
       ? evidence.map((item) => item?.url || item?.proxyUrl).filter(Boolean)
-      : null;
+      : [];
     const [shots, setShots] = useState(remoteShots);
     const [zoom, setZoom] = useState(null);
 
     useEffect(() => {
-      let alive = true;
-      if (remoteShots) {
-        setShots(remoteShots);
-        return () => {
-          alive = false;
-        };
-      }
-      (async () => {
-        const res = await store.get(shotKey(reportId), true);
-        if (alive) {
-          try {
-            setShots(res ? JSON.parse(res.value) : []);
-          } catch {
-            setShots([]);
-          }
-        }
-      })();
-      return () => {
-        alive = false;
-      };
+      setShots(remoteShots);
     }, [reportId, evidence]);
 
     if (shots === null)
@@ -284,13 +254,7 @@
     );
   }
 
-  function SubmitForm({
-    onSubmit,
-    session,
-    account,
-    featureFlags,
-    persistEvidence = true,
-  }) {
+  function SubmitForm({ onSubmit, session, account, featureFlags }) {
     const [nickname, setNickname] = useState("");
     const [category, setCategory] = useState("hack");
     const [tags, setTags] = useState([]);
@@ -349,12 +313,9 @@
 
       setBusy(true);
       try {
-        const id = uid();
-        if (persistEvidence && shots.length)
-          await store.set(shotKey(id), JSON.stringify(shots), true);
+        // 제보 ID는 서버가 Discord 메시지 ID로 정한다.
         await onSubmit(
           {
-            id,
             nickname: nickname.trim(),
             category,
             tags,

@@ -46,32 +46,8 @@ window.WR = window.WR || {};
     },
   ];
   WR.NICK_RE = /^[가-힣ㄱ-ㅎa-zA-Z0-9 _.\-]{2,20}$/;
-  WR.ID_RE = /^[a-zA-Z0-9_]{3,16}$/;
-  WR.REPORTS_KEY = "wr-reports";
-  WR.VOTES_KEY = "wr-votes";
-  WR.ACCOUNTS_KEY = "wr-accounts";
-  WR.SESSION_KEY = "wr-session";
-  WR.STATUS_LABEL = {
-    pending: "검수 대기",
-    approved: "공개됨",
-    rejected: "반려됨",
-  };
-  WR.STATUS_COLOR = {
-    pending: WR.C.gold,
-    approved: WR.C.abuse,
-    rejected: WR.C.danger,
-  };
-  WR.ACC_LABEL = {
-    pending: "인증 대기",
-    approved: "인증됨",
-    rejected: "인증 거절",
-  };
-  WR.ACC_COLOR = {
-    pending: WR.C.gold,
-    approved: WR.C.abuse,
-    rejected: WR.C.danger,
-  };
-  WR.FEATURE_FLAGS_KEY = "wr-feature-flags";
+  // Bridge가 설정을 못 줄 때만 쓰는 대비값이다. 진짜 설정은 Discord의
+  // wr-config 고정 메시지가 원본이며 관리자 화면에서 고친다.
   WR.DEFAULT_FEATURE_FLAGS = {
     publicList: true,
     reportSubmission: true,
@@ -81,5 +57,11 @@ window.WR = window.WR || {};
     signup: true,
     voting: true,
     reporterIdentity: true,
+    maintenanceMode: false,
+  };
+  WR.DEFAULT_SITE_TEXT = {
+    siteTitle: "협곡 기록소",
+    siteTagline: "와일드 리프트 비정상 플레이 제보 · 승인 후 공개",
+    noticeText: "",
   };
 })();

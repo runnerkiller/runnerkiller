@@ -10,6 +10,8 @@ import {
   ConfigParseError,
   ConfigUpdateError,
   FEATURE_FLAG_DEFAULTS,
+  SITE_TEXT_DEFAULTS,
+  SITE_TEXT_MAX_LENGTH,
   CONFIG_SCHEMA_VERSION,
 } from "../src/repositories/configRepository.js";
 import { createDiscordClient } from "../src/discordClient.js";
@@ -109,6 +111,32 @@ describe("parseConfigMessage", () => {
     const content = configMessageContent({ 미래기능: true });
     const { config } = parseConfigMessage(content);
     assert.equal(config.미래기능, undefined);
+  });
+
+  test("사이트 문구가 없으면 기본값을 쓴다", () => {
+    const { config, warnings } = parseConfigMessage(
+      JSON.stringify({ schemaVersion: 1, type: "config" }),
+    );
+    assert.equal(config.siteTitle, SITE_TEXT_DEFAULTS.siteTitle);
+    assert.equal(config.noticeText, SITE_TEXT_DEFAULTS.noticeText);
+    assert.deepEqual(warnings, []);
+  });
+
+  test("사이트 문구가 길이 제한을 넘으면 자르고 경고한다", () => {
+    const tooLong = "가".repeat(SITE_TEXT_MAX_LENGTH.siteTitle + 5);
+    const { config, warnings } = parseConfigMessage(
+      configMessageContent({ siteTitle: tooLong }),
+    );
+    assert.equal(config.siteTitle.length, SITE_TEXT_MAX_LENGTH.siteTitle);
+    assert.ok(warnings.some((w) => w.includes("siteTitle")));
+  });
+
+  test("사이트 문구가 문자열이 아니면 기본값으로 되돌리고 경고한다", () => {
+    const { config, warnings } = parseConfigMessage(
+      configMessageContent({ siteTagline: 42 }),
+    );
+    assert.equal(config.siteTagline, SITE_TEXT_DEFAULTS.siteTagline);
+    assert.ok(warnings.some((w) => w.includes("siteTagline")));
   });
 
   test("깨진 JSON은 기본값으로 넘어가지 않고 예외를 던진다", () => {
@@ -378,5 +406,48 @@ describe("createConfigRepository", () => {
     const sent = JSON.parse(fetchImpl.calls[1].init.body);
     assert.match(sent.content, /"evidenceRequired": false/);
     assert.equal(result.config.evidenceRequired, false);
+  });
+
+  test("사이트 문구를 저장한다", async () => {
+    const updatedContent = configMessageContent({
+      siteTitle: "새 이름",
+      noticeText: "점검 예정입니다",
+      updatedByDiscordId: "444444444444444444",
+    });
+    const { repository, fetchImpl } = makeRepository([
+      { status: 200, body: { content: configMessageContent() } },
+      { status: 200, body: { content: updatedContent } },
+    ]);
+
+    const result = await repository.update(
+      { siteTitle: "새 이름", noticeText: "점검 예정입니다" },
+      "444444444444444444",
+    );
+
+    assert.equal(result.config.siteTitle, "새 이름");
+    assert.equal(result.config.noticeText, "점검 예정입니다");
+    const sent = JSON.parse(fetchImpl.calls[1].init.body);
+    assert.match(sent.content, /"siteTitle": "새 이름"/);
+  });
+
+  test("사이트 문구가 길이 제한을 넘으면 저장을 거부한다", async () => {
+    const { repository, fetchImpl } = makeRepository({
+      status: 200,
+      body: { content: configMessageContent() },
+    });
+
+    await assert.rejects(
+      () =>
+        repository.update(
+          { siteTitle: "가".repeat(SITE_TEXT_MAX_LENGTH.siteTitle + 1) },
+          "444444444444444444",
+        ),
+      ConfigUpdateError,
+    );
+    await assert.rejects(
+      () => repository.update({ siteTitle: 123 }, "444444444444444444"),
+      ConfigUpdateError,
+    );
+    assert.equal(fetchImpl.calls.length, 0, "검증 실패 시 Discord를 부르지 않는다");
   });
 });
